@@ -1,0 +1,5 @@
+{
+  "name": "Case File Interrogator",
+  "description": "A secure, AI-powered RAG system designed for high-volume litigation. Acting as a 'Ruthless Senior Associate,' it ingests raw evidence (PDFs, Images, Text) to generate actionable legal intelligence.\n\nKey Capabilities:\n1. Deep Legal Analysis: Instantly extracts 'Critical Findings' using the 'Golden Chain' framework (Duty, Breach, Causation). Specialized protocols include Medical Chronology, Settlement Valuation, Bias Detection, and the 'Liar's List' for witness impeachment.\n2. Forensic Visualization: Generates admissible-style evidence visuals (Crime Scene Sketches, Technical Diagrams, Blueprints) and cinematic video reenactments (via Veo) based on case facts.\n3. Interactive Interrogation: A secure chat interface with proactive follow-up suggestions, document context, and Google Search grounding for legal precedents.\n4. Visual Timelines: Auto-generates chronological visual frameworks of key events.\n5. Executive Summaries: Instant extraction of parties, jurisdiction, and incident synopsis with automated tagging.",
+  "requestFramePermissions": []
+}
