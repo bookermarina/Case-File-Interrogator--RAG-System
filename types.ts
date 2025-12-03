@@ -1,4 +1,3 @@
-
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -12,15 +11,17 @@ export type MediaType = 'image' | 'video';
 
 export type Tone = 'Objective' | 'Skeptical' | 'Aggressive' | 'Formal' | 'Empathetic';
 
-export type EvidenceType = 'Crime Scene Sketch' | 'CCTV Footage' | 'Technical Diagram' | 'Map Visualization' | 'Photorealistic' | 'Abstract Network' | 'Vintage Photo' | 'Blueprint' | 'Timeline Visualization';
+export type EvidenceType = 'Crime Scene Sketch' | 'CCTV Footage' | 'Technical Diagram' | 'Map Visualization' | 'Photorealistic' | 'Abstract Network' | 'Vintage Photo' | 'Blueprint' | 'Timeline Visualization' | 'Strengths & Weaknesses Visualization' | 'Investigative Mind Map';
 
 export type Language = 'English' | 'Spanish' | 'French' | 'German' | 'Mandarin' | 'Japanese' | 'Hindi' | 'Arabic' | 'Portuguese' | 'Russian';
 
-export type AnalysisDepth = 'Initial Case Assessment' | 'Medical Chronology' | 'Liability & Negligence' | 'Witness Credibility' | 'Settlement Valuation' | 'Bias & Fact Separation' | "Liar's List";
+export type AnalysisDepth = 'Initial Case Assessment' | 'Medical Chronology' | 'Liability & Negligence' | 'Witness Credibility' | 'Settlement Valuation' | 'Bias & Fact Separation' | "Liar's List" | 'Witness Bias Detection';
 
 export type DocumentType = 'Internal Case Memo' | 'Demand Letter' | 'Client Status Update' | 'Motion in Limine (Draft)' | 'Deposition Questions Outline';
 
-export type WorkflowStep = 'upload' | 'review' | 'interrogate' | 'chat' | 'view';
+export type WorkflowStep = 'upload' | 'dashboard';
+
+export type AssetTab = 'analysis' | 'visuals' | 'documents' | 'graph';
 
 export interface GeneratedContent {
   id: string;
@@ -49,12 +50,18 @@ export interface InterrogationResult {
   searchResults: SearchResultItem[];
 }
 
+export interface StreamComponent {
+  type: 'analysis_result' | 'visual_generated' | 'doc_generated' | 'suggestion_chips';
+  data: any;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'model';
   text: string;
   timestamp: number;
   suggestions?: string[];
+  component?: StreamComponent; // UI Widget embedded in message
 }
 
 export interface CaseSummary {
@@ -64,4 +71,42 @@ export interface CaseSummary {
   jurisdiction: string;
   synopsis: string;
   tags: string[];
+}
+
+// Mind Map Types
+export type NodeType = 'case' | 'person' | 'evidence' | 'location' | 'event';
+
+export interface MindMapNode {
+  id: string;
+  label: string;
+  type: NodeType;
+  description: string;
+  color?: string;
+  x?: number;
+  y?: number;
+}
+
+export interface MindMapEdge {
+  source: string;
+  target: string;
+  relation: string;
+}
+
+export interface MindMapData {
+  nodes: MindMapNode[];
+  edges: MindMapEdge[];
+}
+
+export interface CaseFile {
+  id: string;
+  fileName: string;
+  fileBase64: string;
+  mimeType: string;
+  uploadTimestamp: number;
+  summary: CaseSummary | null;
+  findings: string[];
+  chatHistory: ChatMessage[];
+  visuals: GeneratedContent[];
+  documents: { title: string, content: string, type: DocumentType }[];
+  mindMap: MindMapData | null;
 }

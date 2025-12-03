@@ -3,8 +3,8 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
 */
-import { GoogleGenAI, Modality, Type, Chat } from "@google/genai";
-import { Tone, EvidenceType, InterrogationResult, SearchResultItem, Language, AspectRatio, ImageResolution, AnalysisDepth, VideoResolution, CaseSummary, DocumentType } from "../types";
+import { GoogleGenAI, Modality, Type, Chat, HarmCategory, HarmBlockThreshold } from "@google/genai";
+import { Tone, EvidenceType, InterrogationResult, SearchResultItem, Language, AspectRatio, ImageResolution, AnalysisDepth, VideoResolution, CaseSummary, DocumentType, MindMapData } from "../types";
 
 // Create a fresh client for every request to ensure the latest API key from process.env.API_KEY is used
 const getAi = () => {
@@ -20,43 +20,40 @@ const VIDEO_MODEL = 'veo-3.1-fast-generate-preview';
 const VIDEO_EXTEND_MODEL = 'veo-3.1-generate-preview';
 const CHAT_MODEL = 'gemini-2.5-flash';
 
+// Safety Configuration: Strict blocking for legal/professional context
+const SAFETY_SETTINGS = [
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE },
+  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE },
+  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE },
+  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE },
+];
+
+const SAFETY_PROTOCOL = `
+### ETHICAL OVERRIDE & BIAS MITIGATION
+1. **Strict Anti-Hallucination:** You must NOT invent laws, statutes, precedents, or facts. If a specific detail is not in the text, state "Not found in record." Do not guess dates or amounts.
+2. **Linguistic Neutrality:** Actively detect and neutralize prejudicial framing in your output. (e.g., Ensure you do not describe one party's actions in passive voice to minimize responsibility while using active voice for another).
+3. **Discriminatory Audit:** Do not propagate discriminatory stereotypes found in witness statements. Instead, flag them as "Potential Bias Indicators."
+`;
+
 const SENIOR_ASSOCIATE_PROMPT = `
 ### ROLE
-You are a Senior Personal Injury Associate at a high-volume litigation firm. Your job is to review raw case files (police reports, witness depositions, medical records, photographs) and extract actionable legal intelligence. You are NOT a summarizer; you are an investigator. Your goal is to find the "smoking gun" that proves liability and maximizes settlement value.
+You are a Senior Personal Injury Associate at a high-volume litigation firm. You are the "Intelligence Engine" of a Case File Interrogator dashboard.
+Your job is to review raw case files (police reports, witness depositions, medical records) and extract actionable legal intelligence. 
+You are NOT just a chatbot; you are an INVESTIGATOR commanding a suite of digital forensics tools.
 
-### OBJECTIVE
-Analyze the provided text/evidence (Case File) and generate a "Case Merit Assessment." You must be skeptical, precise, and citations-focused.
-
-### ANALYSIS FRAMEWORK (THE "GOLDEN CHAIN")
-You must organize your output into these exact sections:
-
-1. **EXECUTIVE SUMMARY (The "VIABILITY SCORE")**
-   - Give a score from 0-100% on how winnable this case is for the Plaintiff.
-   - One sentence explaining WHY (e.g., "Strong liability due to admitted intoxication, but damages may be capped.").
-
-2. **LIABILITY ANALYSIS (Duty -> Breach -> Causation)**
-   - **Duty:** Who had the responsibility to be safe? (e.g., "Hearst had a duty not to drive drunk.")
-   - **Breach:** Exact evidence they failed. Quote specific lines. (e.g., "Witness A states Hearst 'stumbled' to his car at 11:00 PM.")
-   - **Causation:** Link the breach to the injury. (e.g., "The collision occurred 15 mins after departure on the direct route home.")
-
-3. **THE "LIAR'S LIST" (Credibility Check)**
-   - Compare witness statements against each other and the police report.
-   - Format: [Witness Name] contradicts [Evidence] regarding [Topic].
-   - *Example:* "Dana (Host) claims the party ended at 10 PM, but the Police Report notes the noise complaint call came in at 11:15 PM."
-
-4. **DAMAGES CALCULATOR (Est.)**
-   - List all physical injuries mentioned (broken bones, lacerations).
-   - List all economic losses (missed work days, totaled car value).
-   - *Critical:* Identify "Aggravating Factors" that increase payout (DUI, gross negligence, fleeing the scene).
-
-5. **MISSING INTEL (The "Discovery List")**
-   - What specific documents or answers are missing? (e.g., "We need the receipt from the liquor store to prove the keg size.")
+### CAPABILITIES & TOOLS
+You are aware that the user has access to these tools via the dashboard. You should proactively suggest them when relevant:
+1. **Analysis Protocols:** (Medical Chronology, Liability Check, Settlement Valuation, Bias Audit, Liar's List).
+2. **Visual Generation:** (Crime Scene Sketches, Timelines, Technical Diagrams).
+3. **Document Drafting:** (Memos, Demand Letters, Motions).
+4. **Mind Mapping:** (Entity relationship graphs).
 
 ### TONE & STYLE GUIDELINES
 - **Be Ruthless:** If a witness sounds coached or unreliable, say so.
 - **No Fluff:** Do not use phrases like "The document mentions..." Just state the fact.
 - **Citations:** Every fact MUST end with a reference (e.g., [Page 4, Paragraph 2]).
-- **Format:** Use Markdown tables for the Timeline.
+
+${SAFETY_PROTOCOL}
 `;
 
 const getToneInstruction = (tone: Tone): string => {
@@ -81,6 +78,8 @@ const getVisualInstruction = (style: EvidenceType): string => {
     case 'Vintage Photo': return "Style: Old evidence photo, sepia or black and white, physical wear, paper texture.";
     case 'Blueprint': return "Style: Architectural blueprint, cyanotype, white lines on blue.";
     case 'Timeline Visualization': return "Style: Professional infographic timeline, linear chronology, connected nodes, clean typography, high contrast, data visualization aesthetic.";
+    case 'Strengths & Weaknesses Visualization': return "Style: Comparative infographic, split-screen or balanced scales composition, distinct color coding (e.g., Blue for Strength, Red for Weakness), clean data visualization, SWOT chart aesthetic.";
+    case 'Investigative Mind Map': return "Style: Complex node-link diagram, dark background, glowing connectors, digital forensic aesthetic, centralized case node.";
     default: return "Style: High-quality evidence visualization.";
   }
 };
@@ -106,7 +105,9 @@ export const createCaseChat = (base64Data: string, mimeType: string): Chat => {
   const suggestionInstruction = `
   
   INTERACTIVE PROTOCOL:
-  At the end of every response, you MUST proactively suggest 3 relevant follow-up questions or interrogation angles based on the evidence. 
+  At the end of every response, you MUST proactively suggest 3 relevant follow-up actions or questions.
+  These can be simple questions OR commands to use your tools (e.g., "Generate Timeline", "Draft Demand Letter").
+  
   Format strictly as:
   ///SUGGESTIONS/// Suggestion 1 | Suggestion 2 | Suggestion 3`;
 
@@ -114,18 +115,19 @@ export const createCaseChat = (base64Data: string, mimeType: string): Chat => {
     model: CHAT_MODEL,
     config: {
       systemInstruction: SENIOR_ASSOCIATE_PROMPT + suggestionInstruction,
+      safetySettings: SAFETY_SETTINGS,
     },
     history: [
       {
         role: 'user',
         parts: [
           fileToPart(base64Data, mimeType),
-          { text: "Here is the case file/evidence. Review it and be ready for interrogation." }
+          { text: "Here is the case file/evidence. Initialize the Intelligence Dashboard." }
         ]
       },
       {
         role: 'model',
-        parts: [{ text: "Case file loaded. I have reviewed the documents. Proceed with your questions, Counsel." }]
+        parts: [{ text: "Case file secure. Intelligence Engine online. I have performed a preliminary scan. I am ready to execute analysis protocols, generate visual reconstructions, or draft legal documents at your command." }]
       }
     ]
   });
@@ -149,7 +151,20 @@ export const analyzeCaseFile = async (base64Data: string, mimeType: string, dept
       focusInstruction = "Focus EXCLUSIVELY on Damages. 1. Itemize 'Special Damages' (Medical bills, lost wages) with estimated costs. 2. Calculate 'General Damages' (Pain and suffering) using standard multipliers (1.5x - 5x). 3. Identify 'Aggravating Factors' (DUI, Gross Negligence) that drive up value. 4. Provide a 'Settlement Range' (Low/Mid/High).";
       break;
     case 'Bias & Fact Separation':
-      focusInstruction = "Focus EXCLUSIVELY on distinguishing objective facts from subjective opinions. For each key witness: 1. Extract 'Direct Observations' (Facts). 2. Extract 'Speculation/Opinion' (Non-facts). 3. Identify specific 'Bias Markers' (emotional language, conflict of interest).";
+      focusInstruction = `
+      Focus EXCLUSIVELY on a FORENSIC BIAS AUDIT. Identify three forms of bias:
+      1. **Subjective vs. Objective:** Distinguish hard facts (timestamps, measurements) from subjective opinion or speculation.
+      2. **Linguistic & Framing Bias:** Identify if language minimizes one party's actions (e.g., passive voice) while emphasizing another's. Flag biased vocabulary in reports.
+      3. **Systemic/Outcome Bias:** Flag any demographic-based assumptions, discriminatory stereotypes, or uneven application of procedure based on identity found in the source text.
+      `;
+      break;
+    case 'Witness Bias Detection':
+      focusInstruction = `
+      Focus EXCLUSIVELY on WITNESS STATEMENT ANALYSIS.
+      1. **Linguistic Bias:** Analyze word choices (e.g., 'smashed' vs 'contacted'). Does the witness use passive voice to deflect blame?
+      2. **Factual Inconsistencies:** Identify statements that contradict physical evidence or established timelines.
+      3. **Coaching/Manipulation:** Look for unnatural phrasing, overly specific details after long periods, or identical phrases used by multiple witnesses.
+      `;
       break;
     case 'Initial Case Assessment':
     default:
@@ -183,6 +198,7 @@ export const analyzeCaseFile = async (base64Data: string, mimeType: string, dept
     },
     config: {
       responseMimeType: "application/json",
+      safetySettings: SAFETY_SETTINGS,
       responseSchema: {
         type: Type.OBJECT,
         properties: {
@@ -214,14 +230,13 @@ export const analyzeCaseFile = async (base64Data: string, mimeType: string, dept
   } catch (e) {
     console.error("Failed to parse analysis", e);
     return {
-        findings: ["Error parsing case file. Please ensure the document text is readable."],
+        findings: ["Error parsing case file or content blocked by safety filters."],
         summary: { parties: "N/A", incidentType: "N/A", date: "N/A", jurisdiction: "N/A", synopsis: "Error extracting summary.", tags: [] },
         precedents: []
     };
   }
 
   // Step 2: Legal Precedent Search (Reasoning Model with Search Tools)
-  // Only attempt if we have valid summary data
   let precedents: SearchResultItem[] = [];
   if (summary.incidentType && summary.incidentType !== "Unknown" && summary.jurisdiction && summary.jurisdiction !== "Unknown") {
       try {
@@ -233,7 +248,8 @@ export const analyzeCaseFile = async (base64Data: string, mimeType: string, dept
                   parts: [{ text: precedentPrompt }]
               },
               config: {
-                  tools: [{ googleSearch: {} }]
+                  tools: [{ googleSearch: {} }],
+                  safetySettings: SAFETY_SETTINGS,
               }
           });
           
@@ -251,14 +267,85 @@ export const analyzeCaseFile = async (base64Data: string, mimeType: string, dept
           }
       } catch (e) {
           console.warn("Precedent search failed:", e);
-          // Continue without precedents rather than failing the whole analysis
       }
   }
   
-  // Deduplicate precedents
   const uniquePrecedents = Array.from(new Map(precedents.map(item => [item.url, item])).values());
 
   return { findings, summary, precedents: uniquePrecedents };
+};
+
+export const generateMindMapData = async (base64Data: string, mimeType: string): Promise<MindMapData> => {
+  const prompt = `
+    ${SENIOR_ASSOCIATE_PROMPT}
+    
+    TASK:
+    Analyze the case file and extract specific Entities (People, Key Evidence, Locations, Events) and their relationships to create an Investigative Mind Map (Node-Link Graph).
+    
+    Requirements:
+    1. Identify the 'Case' as the central root node.
+    2. Identify 4-8 key nodes directly related to the case (e.g. The Plaintiff, The Defendant, The Crash Site).
+    3. Identify secondary nodes connected to those key nodes.
+    4. Define the relationships (edges) between them.
+    
+    OUTPUT:
+    Return a JSON object:
+    {
+      "nodes": [{ "id": "1", "label": "Short Label", "type": "case|person|evidence|location|event", "description": "Short details..." }],
+      "edges": [{ "source": "1", "target": "2", "relation": "relationship label" }]
+    }
+  `;
+
+  const response = await getAi().models.generateContent({
+    model: ANALYSIS_MODEL,
+    contents: {
+      parts: [
+        fileToPart(base64Data, mimeType),
+        { text: prompt }
+      ]
+    },
+    config: {
+      responseMimeType: "application/json",
+      safetySettings: SAFETY_SETTINGS,
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          nodes: { 
+            type: Type.ARRAY, 
+            items: { 
+              type: Type.OBJECT, 
+              properties: {
+                id: { type: Type.STRING },
+                label: { type: Type.STRING },
+                type: { type: Type.STRING },
+                description: { type: Type.STRING },
+              }
+            } 
+          },
+          edges: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                source: { type: Type.STRING },
+                target: { type: Type.STRING },
+                relation: { type: Type.STRING },
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  try {
+    const data = JSON.parse(response.text || "{}");
+    if (!data.nodes || !data.edges) throw new Error("Invalid graph data");
+    return data as MindMapData;
+  } catch (e) {
+    console.error(e);
+    return { nodes: [], edges: [] };
+  }
 };
 
 export const interrogateCaseFile = async (
@@ -281,21 +368,20 @@ export const interrogateCaseFile = async (
     TASK 1 (TEXT RESPONSE): 
     Answer the user's query applying the "Ruthless Senior Associate" persona. 
     - Use the Golden Chain framework if relevant (Duty/Breach/Causation).
-    - Be concise, cite pages/paragraphs, and flag inconsistencies.
+    - Be concise, cite pages/paragraphs.
     - ${toneInstr}
     - Language: ${language}
     
     TASK 2 (VISUAL PROMPT):
     Create a detailed prompt for an AI image generator to visualize the evidence or scene discussed in your answer.
     - Style: ${styleInstr}
-    ${style === 'Timeline Visualization' ? '- Detail: Ensure the visualization includes clear text labels for dates and short descriptions of events. Layout should be chronological (linear or Gantt).' : ''}
     
     TASK 3 (KEY ENTITIES):
     Extract key people, dates, or locations involved in this specific query.
   `;
 
   const response = await getAi().models.generateContent({
-    model: REASONING_MODEL, // Using reasoning model for the interrogation
+    model: REASONING_MODEL,
     contents: {
       parts: [
         fileToPart(base64Data, mimeType),
@@ -303,8 +389,9 @@ export const interrogateCaseFile = async (
       ]
     },
     config: {
-      tools: [{ googleSearch: {} }], // Use search for checking precedents if asked
+      tools: [{ googleSearch: {} }],
       responseMimeType: "application/json",
+      safetySettings: SAFETY_SETTINGS,
       responseSchema: {
         type: Type.OBJECT,
         properties: {
@@ -318,7 +405,6 @@ export const interrogateCaseFile = async (
 
   const result = JSON.parse(response.text || "{}");
   
-  // Extract Grounding (Search Results) if search was used
   const searchResults: SearchResultItem[] = [];
   const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
   if (chunks) {
@@ -349,6 +435,7 @@ export const generateEvidenceVisual = async (prompt: string, aspectRatio: Aspect
     },
     config: {
       responseModalities: [Modality.IMAGE],
+      safetySettings: SAFETY_SETTINGS,
       imageConfig: {
         aspectRatio: aspectRatio,
         imageSize: resolution
@@ -361,7 +448,7 @@ export const generateEvidenceVisual = async (prompt: string, aspectRatio: Aspect
        return `data:image/png;base64,${part.inlineData.data}`;
     }
   }
-  throw new Error("Failed to generate evidence visualization");
+  throw new Error("Failed to generate evidence visualization.");
 };
 
 export const generateReenactmentVideo = async (prompt: string, aspectRatio: AspectRatio, resolution: VideoResolution): Promise<{url: string, metadata: any}> => {
@@ -442,6 +529,7 @@ export const editEvidenceVisual = async (currentImageBase64: string, editInstruc
     },
     config: {
       responseModalities: [Modality.IMAGE],
+      safetySettings: SAFETY_SETTINGS,
     }
   });
   
@@ -450,7 +538,7 @@ export const editEvidenceVisual = async (currentImageBase64: string, editInstruc
        return `data:image/png;base64,${part.inlineData.data}`;
     }
   }
-  throw new Error("Failed to edit evidence");
+  throw new Error("Failed to edit evidence.");
 };
 
 export const generateLegalDocument = async (summary: CaseSummary, findings: string[], docType: DocumentType): Promise<string> => {
@@ -474,18 +562,17 @@ export const generateLegalDocument = async (summary: CaseSummary, findings: stri
     ${contextString}
 
     REQUIREMENTS:
-    - Format: Professional Markdown (headers, bullet points, standard legal layout).
-    - Tone: Formal, precise, authoritative (unless 'Client Status Update', which should be professional but accessible).
+    - Format: Professional Markdown.
+    - Tone: Formal, precise, authoritative.
     - Content: Incorporate the key findings relevant to the document type.
-    - If ${docType} is 'Demand Letter', include a placeholder for settlement amount if not calculated.
-    - If ${docType} is 'Motion in Limine', cite standard rules of evidence generally.
 
     Output the document text only.
   `;
 
   const response = await getAi().models.generateContent({
-    model: ANALYSIS_MODEL, // Flash is good for text generation
-    contents: { parts: [{ text: prompt }] }
+    model: ANALYSIS_MODEL,
+    contents: { parts: [{ text: prompt }] },
+    config: { safetySettings: SAFETY_SETTINGS }
   });
 
   return response.text || "Failed to generate document.";
