@@ -196,65 +196,84 @@ export const analyzeCaseFile = async (base64Data: string, mimeType: string, dept
     Ensure the response is valid JSON.
   `;
 
-  // Step 1: Text Analysis (Reasoning Model for Graph + Analysis)
-  const response = await getAi().models.generateContent({
-    model: REASONING_MODEL,
-    contents: {
-      parts: [
-        fileToPart(base64Data, mimeType),
-        { text: prompt }
-      ]
-    },
-    config: {
-      responseMimeType: "application/json",
-      safetySettings: SAFETY_SETTINGS,
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-            findings: { type: Type.ARRAY, items: { type: Type.STRING } },
-            summary: {
-                type: Type.OBJECT,
-                properties: {
-                    parties: { type: Type.STRING },
-                    incidentType: { type: Type.STRING },
-                    date: { type: Type.STRING },
-                    jurisdiction: { type: Type.STRING },
-                    synopsis: { type: Type.STRING },
-                    tags: { type: Type.ARRAY, items: { type: Type.STRING } }
-                }
-            },
-            graphData: {
-                type: Type.OBJECT,
-                properties: {
-                    nodes: { 
-                        type: Type.ARRAY, 
-                        items: { 
-                        type: Type.OBJECT, 
-                        properties: {
-                            id: { type: Type.STRING },
-                            label: { type: Type.STRING },
-                            type: { type: Type.STRING },
-                            description: { type: Type.STRING },
-                        }
-                        } 
-                    },
-                    edges: {
-                        type: Type.ARRAY,
-                        items: {
-                        type: Type.OBJECT, 
-                        properties: {
-                            source: { type: Type.STRING },
-                            target: { type: Type.STRING },
-                            relation: { type: Type.STRING },
-                        }
-                        }
-                    }
-                }
-            }
-        }
+  const config = {
+    responseMimeType: "application/json",
+    safetySettings: SAFETY_SETTINGS,
+    responseSchema: {
+      type: Type.OBJECT,
+      properties: {
+          findings: { type: Type.ARRAY, items: { type: Type.STRING } },
+          summary: {
+              type: Type.OBJECT,
+              properties: {
+                  parties: { type: Type.STRING },
+                  incidentType: { type: Type.STRING },
+                  date: { type: Type.STRING },
+                  jurisdiction: { type: Type.STRING },
+                  synopsis: { type: Type.STRING },
+                  tags: { type: Type.ARRAY, items: { type: Type.STRING } }
+              }
+          },
+          graphData: {
+              type: Type.OBJECT,
+              properties: {
+                  nodes: { 
+                      type: Type.ARRAY, 
+                      items: { 
+                      type: Type.OBJECT, 
+                      properties: {
+                          id: { type: Type.STRING },
+                          label: { type: Type.STRING },
+                          type: { type: Type.STRING },
+                          description: { type: Type.STRING },
+                      }
+                      } 
+                  },
+                  edges: {
+                      type: Type.ARRAY,
+                      items: {
+                      type: Type.OBJECT, 
+                      properties: {
+                          source: { type: Type.STRING },
+                          target: { type: Type.STRING },
+                          relation: { type: Type.STRING },
+                      }
+                      }
+                  }
+              }
+          }
       }
     }
-  });
+  };
+
+  let response;
+  
+  // RETRY STRATEGY: Try REASONING_MODEL (Pro) first, then fallback to ANALYSIS_MODEL (Flash)
+  try {
+      response = await getAi().models.generateContent({
+        model: REASONING_MODEL,
+        contents: { parts: [fileToPart(base64Data, mimeType), { text: prompt }] },
+        config: config
+      });
+  } catch (error: any) {
+      console.warn(`Analysis failed on ${REASONING_MODEL}, attempting fallback to ${ANALYSIS_MODEL}. Error: ${error.message}`);
+      
+      try {
+          // Fallback to Flash
+          response = await getAi().models.generateContent({
+            model: ANALYSIS_MODEL,
+            contents: { parts: [fileToPart(base64Data, mimeType), { text: prompt }] },
+            config: config
+          });
+      } catch (fallbackError: any) {
+          console.error("Critical Failure: Both primary and fallback models failed.", fallbackError);
+          return {
+              findings: ["Critical System Error: Analysis Service Unavailable. Please check file format or try again later."],
+              summary: { parties: "Error", incidentType: "Error", date: "N/A", jurisdiction: "N/A", synopsis: "Analysis aborted due to service interruption.", tags: ["Error"] },
+              precedents: []
+          };
+      }
+  }
   
   let result;
   let summary: CaseSummary;
@@ -264,12 +283,28 @@ export const analyzeCaseFile = async (base64Data: string, mimeType: string, dept
   try {
     result = JSON.parse(cleanJsonString(response.text || "{}"));
     findings = Array.isArray(result.findings) ? result.findings.map(String).filter((f: string) => f.length > 5) : [];
-    summary = result.summary || { parties: "Unknown", incidentType: "Unknown", date: "Unknown", jurisdiction: "Unknown", synopsis: "Analysis incomplete.", tags: [] };
-    graphData = result.graphData;
+    
+    // Robustly construct summary to prevent undefined errors in UI
+    const rawSummary = result.summary || {};
+    summary = {
+        parties: rawSummary.parties || "Unknown Parties",
+        incidentType: rawSummary.incidentType || "Unknown Incident",
+        date: rawSummary.date || "Unknown Date",
+        jurisdiction: rawSummary.jurisdiction || "Unknown Jurisdiction",
+        synopsis: rawSummary.synopsis || "No synopsis available.",
+        tags: Array.isArray(rawSummary.tags) ? rawSummary.tags : []
+    };
+    
+    if (result.graphData) {
+       graphData = {
+           nodes: Array.isArray(result.graphData.nodes) ? result.graphData.nodes : [],
+           edges: Array.isArray(result.graphData.edges) ? result.graphData.edges : []
+       };
+    }
   } catch (e) {
-    console.error("Failed to parse analysis", e);
+    console.error("Failed to parse analysis JSON", e);
     return {
-        findings: ["Error parsing case file or content blocked by safety filters."],
+        findings: ["Error parsing analysis results. The model response may have been truncated."],
         summary: { parties: "N/A", incidentType: "N/A", date: "N/A", jurisdiction: "N/A", synopsis: "Error extracting summary.", tags: [] },
         precedents: []
     };
@@ -277,12 +312,12 @@ export const analyzeCaseFile = async (base64Data: string, mimeType: string, dept
 
   // Step 2: Legal Precedent Search (Reasoning Model with Search Tools)
   let precedents: SearchResultItem[] = [];
-  if (summary.incidentType && summary.incidentType !== "Unknown" && summary.jurisdiction && summary.jurisdiction !== "Unknown") {
+  if (summary.incidentType && summary.incidentType !== "Unknown Incident" && summary.jurisdiction && summary.jurisdiction !== "Unknown Jurisdiction") {
       try {
           const precedentPrompt = `Find 4 specific case law precedents relevant to a ${summary.incidentType} case in ${summary.jurisdiction} focusing on ${depth === 'Initial Case Assessment' ? 'liability and damages' : depth}. List case names and citations.`;
           
           const searchResponse = await getAi().models.generateContent({
-              model: REASONING_MODEL,
+              model: REASONING_MODEL, // Keep Reasoning model for Search as it supports tools better
               contents: {
                   parts: [{ text: precedentPrompt }]
               },

@@ -84,7 +84,7 @@ const AssetSidebar: React.FC<AssetSidebarProps> = ({
               <div className={`transition-all duration-500 ${viewMode === 'technical' ? 'glass-panel p-4 border-l-4 border-l-indigo-500 font-mono text-xs' : 'bg-white p-6 shadow-md border border-slate-100 font-serif'}`}>
                 <div className="flex items-center justify-between mb-4">
                     <h3 className={`uppercase tracking-widest ${viewMode === 'technical' ? 'text-indigo-600 font-bold text-[10px]' : 'text-slate-900 font-bold text-sm border-b-2 border-slate-900 pb-1'}`}>Case Abstract</h3>
-                    {viewMode === 'technical' && <span className="text-[9px] text-slate-400 font-mono">ID: {summary.incidentType.replace(/\s/g, '_').toUpperCase()}</span>}
+                    {viewMode === 'technical' && <span className="text-[9px] text-slate-400 font-mono">ID: {(summary.incidentType || 'UNKNOWN').replace(/\s/g, '_').toUpperCase()}</span>}
                 </div>
                 
                 <div className={`grid grid-cols-2 gap-4 mb-4 ${viewMode === 'technical' ? 'text-[10px]' : 'text-sm'}`}>

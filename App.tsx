@@ -111,22 +111,29 @@ const App: React.FC = () => {
 
   const mergeGraphData = (newData: MindMapData) => {
       setMindMapData(prev => {
-          if (!prev) return newData;
+          const prevNodes = prev?.nodes || [];
+          const prevEdges = prev?.edges || [];
+
+          if (!newData) return { nodes: prevNodes, edges: prevEdges };
           
-          const newNodes = [...prev.nodes];
-          const newEdges = [...prev.edges];
+          const newNodes = [...prevNodes];
+          const newEdges = [...prevEdges];
 
-          newData.nodes.forEach(n => {
-              if (!newNodes.find(pn => pn.id === n.id || pn.label === n.label)) {
-                  newNodes.push(n);
-              }
-          });
+          if (Array.isArray(newData.nodes)) {
+            newData.nodes.forEach(n => {
+                if (!newNodes.find(pn => pn.id === n.id || pn.label === n.label)) {
+                    newNodes.push(n);
+                }
+            });
+          }
 
-          newData.edges.forEach(e => {
-              if (!newEdges.find(pe => pe.source === e.source && pe.target === e.target)) {
-                  newEdges.push(e);
-              }
-          });
+          if (Array.isArray(newData.edges)) {
+            newData.edges.forEach(e => {
+                if (!newEdges.find(pe => pe.source === e.source && pe.target === e.target)) {
+                    newEdges.push(e);
+                }
+            });
+          }
 
           return { nodes: newNodes, edges: newEdges };
       });
@@ -186,7 +193,7 @@ const App: React.FC = () => {
                 role: 'model',
                 text: `Analysis Complete. I have identified ${result.findings.length} key findings and extracted the case abstract. \n\nHow should we proceed?`,
                 timestamp: Date.now(),
-                suggestions: ['Generate Timeline', 'Check Witness Credibility', 'Draft Case Memo'],
+                suggestions: ['Check Witness Credibility', 'Generate Timeline', 'Draft Case Memo', 'Analyze Liability'],
                 component: { type: 'analysis_result', data: result.summary }
             }]);
           } else {
@@ -206,26 +213,54 @@ const App: React.FC = () => {
 
   // --- COMMAND HANDLING ---
   const executeCommand = async (cmd: string) => {
+      const lowerCmd = cmd.toLowerCase();
       let userQuery = cmd;
       let depth: AnalysisDepth | null = null;
       let action: 'analyze' | 'visualize' | 'draft' | 'chat' = 'chat';
       let docType: DocumentType = 'Internal Case Memo';
 
-      if (cmd.includes('/analyze liability')) { depth = 'Liability & Negligence'; action = 'analyze'; }
-      else if (cmd.includes('/analyze medical')) { depth = 'Medical Chronology'; action = 'analyze'; }
-      else if (cmd.includes('/analyze value')) { depth = 'Settlement Valuation'; action = 'analyze'; }
-      else if (cmd.includes('/analyze liars')) { depth = "Liar's List"; action = 'analyze'; }
-      else if (cmd.includes('/visualize')) { action = 'visualize'; userQuery = cmd.replace('/visualize', '').trim(); }
-      else if (cmd.includes('/draft')) { action = 'draft'; }
+      // 1. Detect Intent & Map to Protocol
+      
+      // Explicit Slash Commands
+      if (lowerCmd.includes('/analyze liability')) { depth = 'Liability & Negligence'; action = 'analyze'; }
+      else if (lowerCmd.includes('/analyze medical')) { depth = 'Medical Chronology'; action = 'analyze'; }
+      else if (lowerCmd.includes('/analyze value')) { depth = 'Settlement Valuation'; action = 'analyze'; }
+      else if (lowerCmd.includes('/analyze liars')) { depth = "Liar's List"; action = 'analyze'; }
+      else if (lowerCmd.includes('/visualize')) { action = 'visualize'; userQuery = cmd.replace(/\/visualize/i, '').trim(); }
+      else if (lowerCmd.includes('/draft')) { action = 'draft'; }
+      
+      // Natural Language Protocol Mapping (e.g. from Suggestions)
+      else if (lowerCmd.includes('witness credibility') || lowerCmd.includes('check witness')) { depth = 'Witness Credibility'; action = 'analyze'; }
+      else if (lowerCmd.includes('witness bias') || lowerCmd.includes('bias detection')) { depth = 'Witness Bias Detection'; action = 'analyze'; }
+      else if (lowerCmd.includes('liability') && lowerCmd.includes('analyze')) { depth = 'Liability & Negligence'; action = 'analyze'; }
+      else if (lowerCmd.includes('medical') && (lowerCmd.includes('timeline') || lowerCmd.includes('chronology'))) { depth = 'Medical Chronology'; action = 'analyze'; }
+      else if (lowerCmd.includes('settlement') || lowerCmd.includes('valuation') || lowerCmd.includes('damages')) { depth = 'Settlement Valuation'; action = 'analyze'; }
+      else if (lowerCmd.includes('liar') && lowerCmd.includes('list')) { depth = "Liar's List"; action = 'analyze'; }
+      else if (lowerCmd.includes('bias') && lowerCmd.includes('audit')) { depth = 'Bias & Fact Separation'; action = 'analyze'; }
+      else if ((lowerCmd.includes('generate') || lowerCmd.includes('create')) && lowerCmd.includes('timeline')) { 
+          // Timelines are typically handled as a specific visual style in this app
+          action = 'visualize'; 
+          userQuery = "Generate a chronological timeline of key events";
+          setEvidenceStyle('Timeline Visualization');
+      }
+      else if (lowerCmd.includes('draft') && lowerCmd.includes('memo')) { action = 'draft'; docType = 'Internal Case Memo'; }
+      else if (lowerCmd.includes('draft') && lowerCmd.includes('letter')) { action = 'draft'; docType = 'Demand Letter'; }
 
-      // 1. Add User Message
-      setChatMessages(prev => [...prev, { id: Date.now().toString(), role: 'user', text: userQuery, timestamp: Date.now() }]);
+      // 2. Add User Message to Chat
+      setChatMessages(prev => [...prev, { id: Date.now().toString(), role: 'user', text: cmd, timestamp: Date.now() }]);
       setIsChatTyping(true);
       setShowCommands(false);
       setChatInput('');
 
       try {
           if (action === 'analyze' && depth) {
+              setChatMessages(prev => [...prev, { 
+                  id: Date.now().toString() + '_processing', 
+                  role: 'model', 
+                  text: `Running protocol: ${depth}...`, 
+                  timestamp: Date.now() 
+              }]);
+
               const result = await analyzeCaseFile(fileBase64, mimeType, depth);
               
               // CREATE FINDING ASSET (Automatically Add to Sidebar)
@@ -240,13 +275,17 @@ const App: React.FC = () => {
 
               if (result.graphData) mergeGraphData(result.graphData);
               
+              setChatMessages(prev => prev.filter(m => !m.id.endsWith('_processing'))); // Remove processing msg
               setChatMessages(prev => [...prev, {
                   id: Date.now().toString(),
                   role: 'model',
-                  text: `Protocol '${depth}' Complete. Findings added to Asset Vault and Graph updated.`,
+                  text: `Protocol '${depth}' Complete.\n\nI have extracted ${result.findings.length} new findings and updated the Case Graph.`,
                   timestamp: Date.now(),
                   component: { type: 'analysis_result', data: { findings: result.findings } }
               }]);
+              
+              // Open sidebar if closed to show new asset
+              if (!isSidebarOpen) setIsSidebarOpen(true);
           } 
           else if (action === 'visualize') {
               const prompt = userQuery || "Visualize key evidence";
@@ -272,12 +311,20 @@ const App: React.FC = () => {
                   timestamp: Date.now(),
                   component: { type: 'visual_generated', data: newContent }
               }]);
+               if (!isSidebarOpen) setIsSidebarOpen(true);
           }
           else if (action === 'draft') {
               // Ensure summary exists before drafting
               if (!caseSummary) {
                   throw new Error("Case summary missing. Run initial analysis first.");
               }
+              setChatMessages(prev => [...prev, { 
+                  id: Date.now().toString() + '_processing', 
+                  role: 'model', 
+                  text: `Drafting document: ${docType}...`, 
+                  timestamp: Date.now() 
+              }]);
+
               // Gather all findings so far to inform the draft
               const allFindings = keyFindings.flatMap(f => f.items);
               const docContent = await generateLegalDocument(caseSummary, allFindings, docType);
@@ -291,7 +338,8 @@ const App: React.FC = () => {
                   timestamp: Date.now()
               };
               setGeneratedDocs(prev => [newDoc, ...prev]);
-
+              
+              setChatMessages(prev => prev.filter(m => !m.id.endsWith('_processing')));
               setChatMessages(prev => [...prev, {
                   id: Date.now().toString(),
                   role: 'model',
@@ -299,13 +347,15 @@ const App: React.FC = () => {
                   timestamp: Date.now(),
                   component: { type: 'doc_generated', data: { title: docType } }
               }]);
+               if (!isSidebarOpen) setIsSidebarOpen(true);
           }
           else {
-              // Standard Chat
+              // Standard Chat Fallback
               sendMessageToGemini(userQuery);
           }
       } catch (e) {
           console.error(e);
+          setChatMessages(prev => prev.filter(m => !m.id.endsWith('_processing')));
           setChatMessages(prev => [...prev, { id: Date.now().toString(), role: 'model', text: "Error executing command. Please check the logs or try again.", timestamp: Date.now() }]);
       } finally {
           setIsChatTyping(false);
