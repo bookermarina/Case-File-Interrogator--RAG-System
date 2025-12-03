@@ -1,3 +1,4 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -54,12 +55,12 @@ const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
 
   const getNodeColor = (type: string) => {
     switch (type) {
-      case 'person': return '#22d3ee'; // cyan-400
-      case 'evidence': return '#f472b6'; // pink-400
-      case 'location': return '#fbbf24'; // amber-400
+      case 'person': return '#0ea5e9'; // sky-500
+      case 'evidence': return '#ec4899'; // pink-500
+      case 'location': return '#eab308'; // yellow-500
       case 'event': return '#ef4444'; // red-500
-      case 'case': return '#ffffff';
-      default: return '#94a3b8';
+      case 'case': return '#334155'; // slate-700
+      default: return '#64748b';
     }
   };
 
@@ -90,25 +91,25 @@ const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-[150] bg-slate-950/95 backdrop-blur-md flex flex-col animate-in fade-in duration-300">
+    <div className="fixed inset-0 z-[150] bg-white flex flex-col animate-in fade-in duration-300">
       
       {/* Header */}
-      <div className="h-16 border-b border-slate-800 flex items-center justify-between px-6 bg-slate-950">
+      <div className="h-16 border-b border-slate-200 flex items-center justify-between px-6 bg-white shadow-sm">
         <div className="flex items-center gap-3">
-            <div className="p-2 bg-cyan-950/50 rounded border border-cyan-500/30">
-                <Maximize2 className="w-4 h-4 text-cyan-400" />
+            <div className="p-2 bg-indigo-50 rounded border border-indigo-200">
+                <Maximize2 className="w-4 h-4 text-indigo-600" />
             </div>
             <div>
-                <h2 className="text-sm font-display font-bold text-white uppercase tracking-widest text-glow-sm">Investigation Board</h2>
+                <h2 className="text-sm font-display font-bold text-slate-800 uppercase tracking-widest">Investigation Board</h2>
                 <p className="text-[10px] text-slate-500 font-mono">Entity Relationship Graph</p>
             </div>
         </div>
         <div className="flex items-center gap-2">
-            <button onClick={() => setZoom(z => Math.max(0.5, z - 0.1))} className="p-2 hover:bg-slate-800 rounded text-slate-400"><ZoomOut className="w-4 h-4"/></button>
-            <span className="text-xs font-mono text-cyan-500 w-12 text-center">{Math.round(zoom * 100)}%</span>
-            <button onClick={() => setZoom(z => Math.min(2, z + 0.1))} className="p-2 hover:bg-slate-800 rounded text-slate-400"><ZoomIn className="w-4 h-4"/></button>
-            <div className="w-px h-6 bg-slate-800 mx-2"></div>
-            <button onClick={onClose} className="p-2 hover:bg-red-950/50 hover:text-red-400 rounded text-slate-400"><X className="w-5 h-5"/></button>
+            <button onClick={() => setZoom(z => Math.max(0.5, z - 0.1))} className="p-2 hover:bg-slate-100 rounded text-slate-500"><ZoomOut className="w-4 h-4"/></button>
+            <span className="text-xs font-mono text-slate-600 w-12 text-center">{Math.round(zoom * 100)}%</span>
+            <button onClick={() => setZoom(z => Math.min(2, z + 0.1))} className="p-2 hover:bg-slate-100 rounded text-slate-500"><ZoomIn className="w-4 h-4"/></button>
+            <div className="w-px h-6 bg-slate-200 mx-2"></div>
+            <button onClick={onClose} className="p-2 hover:bg-red-50 hover:text-red-500 rounded text-slate-400"><X className="w-5 h-5"/></button>
         </div>
       </div>
 
@@ -116,13 +117,13 @@ const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
         {/* Canvas */}
         <div 
             ref={containerRef}
-            className={`flex-1 relative overflow-hidden bg-slate-950 cursor-move`}
+            className={`flex-1 relative overflow-hidden bg-slate-50 cursor-move`}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
         >
-            <div className="absolute inset-0 bg-grid-slate-800/[0.1] bg-[length:40px_40px] pointer-events-none"></div>
+            <div className="absolute inset-0 bg-grid-slate-200/[0.5] bg-[length:40px_40px] pointer-events-none"></div>
             
             <div 
                 className="absolute inset-0 transition-transform duration-75 ease-out origin-center"
@@ -140,38 +141,31 @@ const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
                                 <line 
                                     x1={source.x} y1={source.y} 
                                     x2={target.x} y2={target.y} 
-                                    stroke="#1e293b" 
+                                    stroke="#cbd5e1" 
                                     strokeWidth="2" 
-                                    className="stroke-slate-800"
-                                />
-                                <line 
-                                    x1={source.x} y1={source.y} 
-                                    x2={target.x} y2={target.y} 
-                                    stroke="url(#gradient-line)" 
-                                    strokeWidth="1" 
-                                    className="opacity-50"
+                                    className="stroke-slate-300"
                                 />
                                 {/* Edge Label (Midpoint) */}
+                                <rect 
+                                    x={(source.x + target.x) / 2 - 20} 
+                                    y={(source.y + target.y) / 2 - 8} 
+                                    width="40" height="16" 
+                                    fill="white" 
+                                    rx="4"
+                                />
                                 <text 
                                     x={(source.x + target.x) / 2} 
-                                    y={(source.y + target.y) / 2} 
+                                    y={(source.y + target.y) / 2 + 3} 
                                     fill="#64748b" 
-                                    fontSize="10" 
+                                    fontSize="8" 
                                     textAnchor="middle" 
-                                    className="font-mono bg-slate-950"
+                                    className="font-mono uppercase tracking-wide"
                                 >
                                     {edge.relation}
                                 </text>
                             </g>
                         );
                     })}
-                    <defs>
-                        <linearGradient id="gradient-line" x1="0%" y1="0%" x2="100%" y2="0%">
-                            <stop offset="0%" stopColor="#06b6d4" stopOpacity="0" />
-                            <stop offset="50%" stopColor="#06b6d4" stopOpacity="1" />
-                            <stop offset="100%" stopColor="#06b6d4" stopOpacity="0" />
-                        </linearGradient>
-                    </defs>
                 </svg>
 
                 {/* Nodes (HTML Overlay for interaction) */}
@@ -188,18 +182,18 @@ const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
                             onClick={(e) => { e.stopPropagation(); setSelectedNode(node); }}
                        >
                            {/* Glow Effect */}
-                           <div className={`absolute inset-0 rounded-full blur-md opacity-20 transition-all ${isSelected ? 'opacity-60 blur-lg scale-150' : 'group-hover:opacity-40'}`} style={{ backgroundColor: getNodeColor(node.type) }}></div>
+                           <div className={`absolute inset-0 rounded-full blur-md opacity-20 transition-all ${isSelected ? 'opacity-60 blur-lg scale-150' : 'group-hover:opacity-30'}`} style={{ backgroundColor: getNodeColor(node.type) }}></div>
                            
                            {/* Node Body */}
                            <div 
-                                className={`w-12 h-12 rounded-full border-2 flex items-center justify-center bg-slate-950 shadow-xl transition-colors`}
-                                style={{ borderColor: isSelected ? getNodeColor(node.type) : '#334155' }}
+                                className={`w-12 h-12 rounded-full border-2 flex items-center justify-center bg-white shadow-lg transition-colors`}
+                                style={{ borderColor: isSelected ? getNodeColor(node.type) : '#cbd5e1' }}
                            >
                                 <Icon className="w-5 h-5" style={{ color: getNodeColor(node.type) }} />
                            </div>
 
                            {/* Label */}
-                           <div className={`absolute top-14 left-1/2 -translate-x-1/2 whitespace-nowrap px-2 py-1 rounded bg-slate-950/80 border border-slate-800 text-[10px] font-mono uppercase tracking-wider text-slate-300 transition-all ${isSelected ? 'border-cyan-500/50 text-cyan-400' : ''}`}>
+                           <div className={`absolute top-14 left-1/2 -translate-x-1/2 whitespace-nowrap px-3 py-1.5 rounded-full bg-white border border-slate-200 text-[10px] font-bold uppercase tracking-wider text-slate-600 shadow-sm transition-all ${isSelected ? 'border-indigo-400 text-indigo-600 ring-2 ring-indigo-50' : ''}`}>
                                {node.label}
                            </div>
                        </div>
@@ -210,22 +204,22 @@ const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
 
         {/* Sidebar Panel (Deep Dive) */}
         {selectedNode && (
-            <div className="w-80 bg-slate-900/80 border-l border-slate-800 p-6 flex flex-col animate-in slide-in-right duration-300 backdrop-blur-md">
+            <div className="w-80 bg-white border-l border-slate-200 p-6 flex flex-col animate-in slide-in-right duration-300 shadow-xl">
                 <div className="flex items-start justify-between mb-6">
                     <div>
-                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{selectedNode.type}</span>
-                        <h3 className="text-xl font-display font-bold text-white mt-1">{selectedNode.label}</h3>
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{selectedNode.type}</span>
+                        <h3 className="text-xl font-display font-bold text-slate-800 mt-1">{selectedNode.label}</h3>
                     </div>
-                    <button onClick={() => setSelectedNode(null)} className="text-slate-500 hover:text-white"><X className="w-4 h-4"/></button>
+                    <button onClick={() => setSelectedNode(null)} className="text-slate-400 hover:text-slate-700"><X className="w-4 h-4"/></button>
                 </div>
 
                 <div className="flex-1 overflow-y-auto mb-6">
-                    <p className="text-sm text-slate-300 leading-relaxed font-mono border-l-2 border-slate-700 pl-4">
+                    <p className="text-sm text-slate-600 leading-relaxed font-mono border-l-2 border-slate-200 pl-4 bg-slate-50 p-3 rounded-r">
                         {selectedNode.description}
                     </p>
                 </div>
 
-                <div className="mt-auto pt-6 border-t border-slate-800">
+                <div className="mt-auto pt-6 border-t border-slate-100">
                     <button 
                         onClick={() => onNodeClick(selectedNode)}
                         className="w-full btn-primary py-3 rounded-lg text-xs font-bold uppercase tracking-widest flex items-center justify-center gap-2"
@@ -233,7 +227,7 @@ const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
                         <MessageSquare className="w-4 h-4" />
                         <span>Deep Dive Query</span>
                     </button>
-                    <p className="text-[9px] text-slate-500 text-center mt-3 font-mono">
+                    <p className="text-[9px] text-slate-400 text-center mt-3 font-mono">
                         Sends entity context to Case Chat
                     </p>
                 </div>

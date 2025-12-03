@@ -1,3 +1,4 @@
+
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -22,6 +23,8 @@ export type DocumentType = 'Internal Case Memo' | 'Demand Letter' | 'Client Stat
 export type WorkflowStep = 'upload' | 'dashboard';
 
 export type AssetTab = 'analysis' | 'visuals' | 'documents' | 'graph';
+
+export type ViewMode = 'technical' | 'reader';
 
 export interface GeneratedContent {
   id: string;
@@ -73,6 +76,22 @@ export interface CaseSummary {
   tags: string[];
 }
 
+export interface FindingAsset {
+  id: string;
+  title: string;
+  type: AnalysisDepth | 'General Discovery';
+  items: string[];
+  timestamp: number;
+}
+
+export interface GeneratedDocument {
+  id: string;
+  title: string;
+  type: DocumentType;
+  content: string;
+  timestamp: number;
+}
+
 // Mind Map Types
 export type NodeType = 'case' | 'person' | 'evidence' | 'location' | 'event';
 
@@ -104,9 +123,9 @@ export interface CaseFile {
   mimeType: string;
   uploadTimestamp: number;
   summary: CaseSummary | null;
-  findings: string[];
+  findings: FindingAsset[];
   chatHistory: ChatMessage[];
   visuals: GeneratedContent[];
-  documents: { title: string, content: string, type: DocumentType }[];
+  documents: GeneratedDocument[];
   mindMap: MindMapData | null;
 }

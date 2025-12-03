@@ -99,6 +99,12 @@ const fileToPart = (base64Data: string, mimeType: string) => {
   };
 };
 
+// Helper to clean JSON string from Markdown code blocks
+const cleanJsonString = (str: string) => {
+  if (!str) return "{}";
+  return str.replace(/```json\n?|\n?```/g, "").trim();
+};
+
 export const createCaseChat = (base64Data: string, mimeType: string): Chat => {
   const ai = getAi();
   
@@ -133,7 +139,7 @@ export const createCaseChat = (base64Data: string, mimeType: string): Chat => {
   });
 };
 
-export const analyzeCaseFile = async (base64Data: string, mimeType: string, depth: AnalysisDepth): Promise<{ findings: string[], summary: CaseSummary, precedents: SearchResultItem[] }> => {
+export const analyzeCaseFile = async (base64Data: string, mimeType: string, depth: AnalysisDepth): Promise<{ findings: string[], summary: CaseSummary, precedents: SearchResultItem[], graphData?: MindMapData }> => {
   // Map the UI depth selection to the Golden Chain framework focus areas
   let focusInstruction = "";
   switch (depth) {
@@ -180,16 +186,19 @@ export const analyzeCaseFile = async (base64Data: string, mimeType: string, dept
     ${focusInstruction}
 
     OUTPUT:
-    Return a JSON Object with two top-level keys:
+    Return a JSON Object with three top-level keys:
     1. "findings": An Array of 6-8 strings. Each string must be a distinct, critical insight or finding formatted like "HEADER: Key fact or insight... [Citation]".
     2. "summary": An Object containing the case metadata: "parties" (e.g. Plaintiff v Defendant), "incidentType" (e.g. Auto Accident), "date", "jurisdiction", "synopsis" (A concise executive summary of the case status and key pivot points, approx 2-3 sentences), and "tags" (An array of 3-5 relevant short keywords or legal categories for indexing, e.g. 'Negligence', 'DUI', 'High Value').
+    3. "graphData": A subset of Mind Map data relevant to THIS specific analysis. Return nodes and edges representing the people, evidence, or events discussed in this analysis. 
+       - nodes: [{ "id": "uuid", "label": "Short Name", "type": "person|evidence|location|event", "description": "Short bio/detail" }]
+       - edges: [{ "source": "id1", "target": "id2", "relation": "verb" }]
 
     Ensure the response is valid JSON.
   `;
 
-  // Step 1: Text Analysis (Flash Model)
+  // Step 1: Text Analysis (Reasoning Model for Graph + Analysis)
   const response = await getAi().models.generateContent({
-    model: ANALYSIS_MODEL,
+    model: REASONING_MODEL,
     contents: {
       parts: [
         fileToPart(base64Data, mimeType),
@@ -213,6 +222,34 @@ export const analyzeCaseFile = async (base64Data: string, mimeType: string, dept
                     synopsis: { type: Type.STRING },
                     tags: { type: Type.ARRAY, items: { type: Type.STRING } }
                 }
+            },
+            graphData: {
+                type: Type.OBJECT,
+                properties: {
+                    nodes: { 
+                        type: Type.ARRAY, 
+                        items: { 
+                        type: Type.OBJECT, 
+                        properties: {
+                            id: { type: Type.STRING },
+                            label: { type: Type.STRING },
+                            type: { type: Type.STRING },
+                            description: { type: Type.STRING },
+                        }
+                        } 
+                    },
+                    edges: {
+                        type: Type.ARRAY,
+                        items: {
+                        type: Type.OBJECT, 
+                        properties: {
+                            source: { type: Type.STRING },
+                            target: { type: Type.STRING },
+                            relation: { type: Type.STRING },
+                        }
+                        }
+                    }
+                }
             }
         }
       }
@@ -222,11 +259,13 @@ export const analyzeCaseFile = async (base64Data: string, mimeType: string, dept
   let result;
   let summary: CaseSummary;
   let findings: string[] = [];
+  let graphData: MindMapData | undefined;
 
   try {
-    result = JSON.parse(response.text || "{}");
+    result = JSON.parse(cleanJsonString(response.text || "{}"));
     findings = Array.isArray(result.findings) ? result.findings.map(String).filter((f: string) => f.length > 5) : [];
     summary = result.summary || { parties: "Unknown", incidentType: "Unknown", date: "Unknown", jurisdiction: "Unknown", synopsis: "Analysis incomplete.", tags: [] };
+    graphData = result.graphData;
   } catch (e) {
     console.error("Failed to parse analysis", e);
     return {
@@ -272,7 +311,7 @@ export const analyzeCaseFile = async (base64Data: string, mimeType: string, dept
   
   const uniquePrecedents = Array.from(new Map(precedents.map(item => [item.url, item])).values());
 
-  return { findings, summary, precedents: uniquePrecedents };
+  return { findings, summary, precedents: uniquePrecedents, graphData };
 };
 
 export const generateMindMapData = async (base64Data: string, mimeType: string): Promise<MindMapData> => {
@@ -287,6 +326,7 @@ export const generateMindMapData = async (base64Data: string, mimeType: string):
     2. Identify 4-8 key nodes directly related to the case (e.g. The Plaintiff, The Defendant, The Crash Site).
     3. Identify secondary nodes connected to those key nodes.
     4. Define the relationships (edges) between them.
+    5. CRITICAL: Keep all 'label' and 'description' fields CONCISE (under 20 words) to prevent data truncation.
     
     OUTPUT:
     Return a JSON object:
@@ -296,8 +336,9 @@ export const generateMindMapData = async (base64Data: string, mimeType: string):
     }
   `;
 
+  // Switching to REASONING_MODEL (gemini-3-pro-preview) for better graph generation and robust handling of large context
   const response = await getAi().models.generateContent({
-    model: ANALYSIS_MODEL,
+    model: REASONING_MODEL,
     contents: {
       parts: [
         fileToPart(base64Data, mimeType),
@@ -325,7 +366,7 @@ export const generateMindMapData = async (base64Data: string, mimeType: string):
           edges: {
             type: Type.ARRAY,
             items: {
-              type: Type.OBJECT,
+              type: Type.OBJECT, 
               properties: {
                 source: { type: Type.STRING },
                 target: { type: Type.STRING },
@@ -339,12 +380,17 @@ export const generateMindMapData = async (base64Data: string, mimeType: string):
   });
 
   try {
-    const data = JSON.parse(response.text || "{}");
-    if (!data.nodes || !data.edges) throw new Error("Invalid graph data");
+    const rawText = cleanJsonString(response.text || "{}");
+    const data = JSON.parse(rawText);
+    if (!data.nodes || !data.edges) throw new Error("Invalid graph data structure");
     return data as MindMapData;
   } catch (e) {
-    console.error(e);
-    return { nodes: [], edges: [] };
+    console.error("Error generating mind map:", e);
+    // Return empty structure gracefully rather than crashing
+    return { 
+        nodes: [{ id: 'error', label: 'Generation Error', type: 'event', description: 'Could not generate graph from file.' }], 
+        edges: [] 
+    };
   }
 };
 
@@ -403,7 +449,8 @@ export const interrogateCaseFile = async (
     },
   });
 
-  const result = JSON.parse(response.text || "{}");
+  const rawText = cleanJsonString(response.text || "{}");
+  const result = JSON.parse(rawText);
   
   const searchResults: SearchResultItem[] = [];
   const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
