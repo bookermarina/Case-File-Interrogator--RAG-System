@@ -22,23 +22,56 @@ export type DocumentType = 'Internal Case Memo' | 'Demand Letter' | 'Client Stat
 
 export type WorkflowStep = 'upload' | 'dashboard';
 
+export type ViewMode = 'technical' | 'reader';
+
 export type AssetTab = 'analysis' | 'visuals' | 'documents' | 'graph';
 
-export type ViewMode = 'technical' | 'reader';
+// --- NEW SOURCE TYPES ---
+export interface CaseSource {
+    id: string;
+    name: string;
+    type: 'pdf' | 'image' | 'text';
+    base64: string;
+    mimeType: string;
+    timestamp: number;
+    isSelected: boolean;
+}
+
+// --- ARTIFACTS (Unified Asset Type) ---
+export type ArtifactType = 'report' | 'visual' | 'video' | 'document' | 'mindmap';
+
+export interface CaseArtifact {
+    id: string;
+    title: string;
+    type: ArtifactType;
+    summary: string; // Short description for the card
+    data: any; // The payload (HTML, Image URL, JSON Graph)
+    timestamp: number;
+    metadata?: any; // Extra prompts, context, settings
+}
 
 export interface GeneratedContent {
   id: string;
   type: MediaType;
   data: string;
-  prompt: string;
+  prompt?: string;
   answer?: string;
   timestamp: number;
-  tone?: Tone;
-  style?: EvidenceType;
-  language?: Language;
-  aspectRatio?: AspectRatio;
-  resolution?: string;
-  videoMetadata?: any;
+}
+
+export interface GeneratedDocument {
+  id: string;
+  title: string;
+  type: DocumentType | string;
+  content: string;
+  timestamp: number;
+}
+
+export interface FindingAsset {
+  id: string;
+  title: string;
+  items: string[];
+  timestamp: number;
 }
 
 export interface SearchResultItem {
@@ -64,7 +97,7 @@ export interface ChatMessage {
   text: string;
   timestamp: number;
   suggestions?: string[];
-  component?: StreamComponent; // UI Widget embedded in message
+  component?: StreamComponent; 
 }
 
 export interface CaseSummary {
@@ -76,28 +109,12 @@ export interface CaseSummary {
   tags: string[];
 }
 
-export interface FindingAsset {
-  id: string;
-  title: string;
-  type: AnalysisDepth | 'General Discovery';
-  items: string[];
-  timestamp: number;
-}
-
-export interface GeneratedDocument {
-  id: string;
-  title: string;
-  type: DocumentType;
-  content: string;
-  timestamp: number;
-}
-
 // Mind Map Types
 export type NodeType = 'case' | 'person' | 'evidence' | 'location' | 'event' | 'statute';
 
 export interface NodeMetadata {
-    role?: string; // e.g. "Plaintiff", "Hostile Witness"
-    impactScore?: number; // 1-10 relevance
+    role?: string; 
+    impactScore?: number; 
     tags?: string[];
     keyQuote?: string;
 }
@@ -107,7 +124,7 @@ export interface MindMapNode {
   label: string;
   type: NodeType;
   description: string;
-  metadata?: NodeMetadata; // Enhanced Data
+  metadata?: NodeMetadata;
   color?: string;
   x?: number;
   y?: number;
@@ -126,22 +143,12 @@ export interface MindMapData {
 
 export interface CaseFile {
   id: string;
-  fileName: string;
-  fileBase64: string;
-  mimeType: string;
-  uploadTimestamp: number;
-  summary: CaseSummary | null;
-  findings: FindingAsset[];
+  name: string; // Case Name
+  sources: CaseSource[];
+  artifacts: CaseArtifact[];
   chatHistory: ChatMessage[];
-  visuals: GeneratedContent[];
-  documents: GeneratedDocument[];
+  summary: CaseSummary | null;
   mindMap: MindMapData | null;
-}
-
-export interface VisualFilter {
-    subject?: string;
-    evidenceType?: EvidenceType;
-    timePeriod?: string;
 }
 
 export interface CaseContextDetection {

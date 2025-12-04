@@ -24,7 +24,7 @@ const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
 
   // Layout Algorithm: Radial
   useEffect(() => {
-    if (!data.nodes.length) return;
+    if (!data || !data.nodes || !data.nodes.length) return;
 
     const width = 800;
     const height = 600;
@@ -90,6 +90,16 @@ const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
     setIsDragging(false);
   };
 
+  if (!data || !data.nodes || data.nodes.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full bg-slate-50 text-slate-400">
+        <Briefcase className="w-12 h-12 mb-3 opacity-20" />
+        <p className="text-xs uppercase tracking-widest mb-4">Empty Map Data</p>
+        <button onClick={onClose} className="px-4 py-2 bg-slate-200 rounded text-xs font-bold text-slate-600">Close</button>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-[150] bg-white flex flex-col animate-in fade-in duration-300">
       
@@ -131,7 +141,7 @@ const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
             >
                 <svg width="100%" height="100%" className="overflow-visible">
                     {/* Edges */}
-                    {data.edges.map((edge, i) => {
+                    {data.edges && data.edges.map((edge, i) => {
                         const source = nodes.find(n => n.id === edge.source);
                         const target = nodes.find(n => n.id === edge.target);
                         if (!source || !target || !source.x || !target.x) return null;

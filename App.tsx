@@ -4,75 +4,48 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 import React, { useState, useEffect, useRef } from 'react';
-import { GeneratedContent, Tone, EvidenceType, Language, SearchResultItem, AspectRatio, ImageResolution, VideoResolution, WorkflowStep, AnalysisDepth, MediaType, ChatMessage, CaseSummary, DocumentType, MindMapData, MindMapNode, StreamComponent, FindingAsset, GeneratedDocument } from './types';
+import { CaseSource, CaseArtifact, ChatMessage, AnalysisDepth, CaseContextDetection } from './types';
 import { 
-  interrogateCaseFile, 
-  generateEvidenceVisual,
-  generateReenactmentVideo, 
-  extendReenactmentVideo,
-  editEvidenceVisual,
-  analyzeCaseFile,
-  createCaseChat,
-  generateLegalDocument,
-  generateMindMapData,
-  detectCaseContext
+  analyzeCaseFile, createCaseChat, detectCaseContext, 
+  generateEvidenceVisual, generateLegalDocument, generateMindMapData, interrogateCaseFile 
 } from './services/geminiService';
 import { Chat, GenerateContentResponse } from "@google/genai";
-import AssetSidebar from './components/AssetSidebar';
-import Loading from './components/Loading';
+import SourcePanel from './components/SourcePanel';
+import CaseStudio from './components/CaseStudio';
 import IntroScreen from './components/IntroScreen';
-import { FileText, Shield, Search, Send, Key, MessageSquare, Bot, User, ArrowLeft, UploadCloud, FileImage, Sparkles, Command, ChevronRight, Zap, FileCode, Video, Image as ImageIcon, Loader2 } from 'lucide-react';
-
-const SUGGESTED_COMMANDS = [
-    { label: 'Analyze Liability', cmd: '/analyze liability', desc: 'Duty, Breach, Causation' },
-    { label: 'Medical Timeline', cmd: '/analyze medical', desc: 'Chronological Injury Report' },
-    { label: 'Settlement Value', cmd: '/analyze value', desc: 'Calculate Damages Range' },
-    { label: "Liar's List", cmd: '/analyze liars', desc: 'Witness Contradictions' },
-    { label: 'Visual Evidence', cmd: '/visualize', desc: 'Create Evidence Image' },
-    { label: 'Strategy Visual', cmd: '/visualize strategy', desc: 'Strengths & Weaknesses Infographic' },
-    { label: 'Draft Memo', cmd: '/draft memo', desc: 'Internal Case Memo' },
-];
+import Infographic from './components/Infographic'; // Reusing for preview
+import MindMap from './components/MindMap'; // Reusing for preview
+import { Shield, Bot, User, Send, ChevronRight, X, Loader2, Download, Clipboard, Sparkles, Layout, PanelRightClose, PanelRightOpen, Menu } from 'lucide-react';
 
 const App: React.FC = () => {
   const [showIntro, setShowIntro] = useState(true);
   
-  // Workflow & Layout State
-  const [workflowStep, setWorkflowStep] = useState<WorkflowStep>('upload');
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true); // Default open on desktop
-  
-  // Data State
-  const [file, setFile] = useState<File | null>(null);
-  const [fileBase64, setFileBase64] = useState<string>('');
-  const [mimeType, setMimeType] = useState<string>('application/pdf');
+  // --- STATE ---
+  const [sources, setSources] = useState<CaseSource[]>([]);
   const [isReadingFile, setIsReadingFile] = useState(false);
+  const [activeArtifact, setActiveArtifact] = useState<CaseArtifact | null>(null);
   
-  // Assets (Managed in Sidebar)
-  const [caseSummary, setCaseSummary] = useState<CaseSummary | null>(null);
-  const [keyFindings, setKeyFindings] = useState<FindingAsset[]>([]); // Structured Assets
-  const [generatedVisuals, setGeneratedVisuals] = useState<GeneratedContent[]>([]);
-  const [generatedDocs, setGeneratedDocs] = useState<GeneratedDocument[]>([]);
-  const [casePrecedents, setCasePrecedents] = useState<SearchResultItem[]>([]);
-  const [mindMapData, setMindMapData] = useState<MindMapData | null>(null);
-
-  // Chat State
+  // Layout State
+  const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
+  const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(true);
+  
+  // Intelligence
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [isChatTyping, setIsChatTyping] = useState(false);
   const chatSessionRef = useRef<Chat | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const [showCommands, setShowCommands] = useState(false);
-
-  // Config State (Defaults)
-  const [tone, setTone] = useState<Tone>('Objective');
-  const [evidenceStyle, setEvidenceStyle] = useState<EvidenceType>('Crime Scene Sketch');
-  const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
   
-  // API Key State
+  // Context & Artifacts
+  const [artifacts, setArtifacts] = useState<CaseArtifact[]>([]);
+  const [contextData, setContextData] = useState<CaseContextDetection>({ 
+      caseType: "Pending...", recommendedProtocols: [], reasoning: "" 
+  });
+
+  // API Key
   const [hasApiKey, setHasApiKey] = useState(false);
   const [checkingKey, setCheckingKey] = useState(true);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Check for API Key
   useEffect(() => {
     const checkKey = async () => {
       if (window.aistudio && window.aistudio.hasSelectedApiKey) {
@@ -89,574 +62,517 @@ const App: React.FC = () => {
       if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages, isChatTyping]);
 
-  const handleSelectKey = async () => {
-    if (window.aistudio && window.aistudio.openSelectKey) {
-      await window.aistudio.openSelectKey();
-      setHasApiKey(true);
-    }
-  };
-
+  // --- SOURCE MANAGEMENT ---
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (selectedFile) {
-      setIsReadingFile(true);
-      setFile(selectedFile);
-      setMimeType(selectedFile.type);
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        setFileBase64(ev.target?.result as string);
-        setIsReadingFile(false);
-      };
-      reader.readAsDataURL(selectedFile);
-    }
-  };
-
-  const mergeGraphData = (newData: MindMapData) => {
-      setMindMapData(prev => {
-          const prevNodes = prev?.nodes || [];
-          const prevEdges = prev?.edges || [];
-
-          if (!newData) return { nodes: prevNodes, edges: prevEdges };
+      if (e.target.files && e.target.files.length > 0) {
+          setIsReadingFile(true);
+          const newFiles = Array.from(e.target.files);
           
-          const newNodes = [...prevNodes];
-          const newEdges = [...prevEdges];
-
-          if (Array.isArray(newData.nodes)) {
-            newData.nodes.forEach(n => {
-                if (!newNodes.find(pn => pn.id === n.id || pn.label === n.label)) {
-                    newNodes.push(n);
-                }
-            });
-          }
-
-          if (Array.isArray(newData.edges)) {
-            newData.edges.forEach(e => {
-                if (!newEdges.find(pe => pe.source === e.source && pe.target === e.target)) {
-                    newEdges.push(e);
-                }
-            });
-          }
-
-          return { nodes: newNodes, edges: newEdges };
-      });
-  };
-
-  /**
-   * AUTONOMOUS DASHBOARD INITIALIZATION
-   * 1. Establish Chat
-   * 2. Detect Case Context (Auto-Discovery)
-   * 3. Run Recommended Protocols (Auto-Analysis)
-   */
-  const initializeDashboard = async () => {
-      if (!fileBase64 || isReadingFile) return;
-      setWorkflowStep('dashboard');
-
-      // 1. Establish Chat
-      if (!chatSessionRef.current) {
-          chatSessionRef.current = createCaseChat(fileBase64, mimeType);
-      }
-
-      setChatMessages([{
-          id: 'sys-init',
-          role: 'model',
-          text: "Secure Uplink Established. Initiating Deep Forensic Ingestion...",
-          timestamp: Date.now()
-      }]);
-      setIsChatTyping(true);
-
-      try {
-          // 2. Detect Context & Recommned Protocols
-          const context = await detectCaseContext(fileBase64, mimeType);
-          
-          setChatMessages(prev => [...prev, {
-              id: 'sys-context',
-              role: 'model',
-              text: `CASE DETECTED: ${context.caseType}\n\n${context.reasoning}\n\nI am automatically initiating the following protocols to build your Intelligence Graph:\n${context.recommendedProtocols.map(p => `• ${p}`).join('\n')}`,
-              timestamp: Date.now(),
-              component: { type: 'auto_protocol_start', data: context }
-          }]);
-
-          // 3. Auto-Run Recommended Protocols
-          // First, always run 'Initial Case Assessment' to get the summary
-          const protocolsToRun = Array.from(new Set(['Initial Case Assessment', ...context.recommendedProtocols])).slice(0, 3); // Limit to top 3 for speed
-
-          for (const protocol of protocolsToRun) {
-              const result = await analyzeCaseFile(fileBase64, mimeType, protocol as AnalysisDepth);
-              
-              if (result) {
-                  // Only set global summary on the initial run
-                  if (protocol === 'Initial Case Assessment') {
-                      setCaseSummary(result.summary);
-                      setCasePrecedents(result.precedents);
-                  }
-
-                  // Add Asset
-                  const newFindingAsset: FindingAsset = {
-                      id: `auto-${Date.now()}-${protocol}`,
-                      title: protocol,
-                      type: protocol as AnalysisDepth,
-                      items: result.findings,
-                      timestamp: Date.now()
+          let processedCount = 0;
+          newFiles.forEach(file => {
+              const reader = new FileReader();
+              reader.onload = (ev) => {
+                  const newSource: CaseSource = {
+                      id: Date.now().toString() + Math.random(),
+                      name: file.name,
+                      type: file.type.includes('pdf') ? 'pdf' : 'image',
+                      mimeType: file.type,
+                      base64: ev.target?.result as string,
+                      timestamp: Date.now(),
+                      isSelected: true // Auto-select new files
                   };
-                  setKeyFindings(prev => [newFindingAsset, ...prev]);
-
-                  // Merge Graph
-                  if (result.graphData) mergeGraphData(result.graphData);
-              }
-          }
-
-          setIsChatTyping(false);
-          setChatMessages(prev => [...prev, {
-              id: 'sys-ready',
-              role: 'model',
-              text: "Forensic Ingestion Complete. The Asset Vault and Knowledge Graph have been populated.\n\nAwaiting your specific orders.",
-              timestamp: Date.now(),
-              suggestions: ['Visualize Evidence', 'Generate Timeline', 'Draft Memo']
-          }]);
-
-      } catch (e) {
-          console.error("Initialization failed", e);
-          setIsChatTyping(false);
-          setChatMessages(prev => [...prev, { id: 'err', role: 'model', text: "Ingestion Error. System falling back to manual mode.", timestamp: Date.now() }]);
+                  setSources(prev => [...prev, newSource]);
+                  processedCount++;
+                  if (processedCount === newFiles.length) {
+                      setIsReadingFile(false);
+                      // Context refresh is now handled by useEffect
+                  }
+              };
+              reader.readAsDataURL(file);
+          });
       }
   };
 
-  // --- COMMAND HANDLING ---
-  const executeCommand = async (cmd: string) => {
-      const lowerCmd = cmd.toLowerCase();
-      let userQuery = cmd;
-      let depth: AnalysisDepth | null = null;
-      let action: 'analyze' | 'visualize' | 'draft' | 'chat' = 'chat';
-      let docType: DocumentType = 'Internal Case Memo';
-      
-      // Use local variable to override state for immediate execution
-      let targetStyle: EvidenceType = evidenceStyle;
+  const toggleSourceSelection = (id: string) => {
+      setSources(prev => prev.map(s => s.id === id ? { ...s, isSelected: !s.isSelected } : s));
+  };
 
-      // 1. Detect Intent & Map to Protocol
-      
-      // Explicit Slash Commands
-      if (lowerCmd.includes('/analyze liability')) { depth = 'Liability & Negligence'; action = 'analyze'; }
-      else if (lowerCmd.includes('/analyze medical')) { depth = 'Medical Chronology'; action = 'analyze'; }
-      else if (lowerCmd.includes('/analyze value')) { depth = 'Settlement Valuation'; action = 'analyze'; }
-      else if (lowerCmd.includes('/analyze liars')) { depth = "Liar's List"; action = 'analyze'; }
-      else if (lowerCmd.includes('/visualize strategy')) { 
-          action = 'visualize'; 
-          userQuery = "Generate a strategic infographic visualization of the case's key strengths and weaknesses based on the findings.";
-          targetStyle = 'Strengths & Weaknesses Visualization';
-          setEvidenceStyle(targetStyle); // Sync state for UI
-      }
-      else if (lowerCmd.includes('/visualize')) { 
-          action = 'visualize'; 
-          userQuery = cmd.replace(/\/visualize/i, '').trim(); 
-      }
-      else if (lowerCmd.startsWith('/draft')) { 
-          action = 'draft';
-          if (lowerCmd.includes('memo')) docType = 'Internal Case Memo';
-          else if (lowerCmd.includes('letter')) docType = 'Demand Letter';
-          else if (lowerCmd.includes('motion')) docType = 'Motion in Limine (Draft)';
-          else if (lowerCmd.includes('deposition') || lowerCmd.includes('questions')) docType = 'Deposition Questions Outline';
-          else if (lowerCmd.includes('status') || lowerCmd.includes('client')) docType = 'Client Status Update';
-          
-          // Remove keywords to capture user custom instructions
-          userQuery = cmd.replace(/^\/draft/i, '')
-                         .replace(/memo|letter|motion|deposition|questions|status|client/gi, '')
-                         .trim();
-      }
-      
-      // Natural Language Protocol Mapping (e.g. from Suggestions)
-      else if (lowerCmd.includes('witness credibility') || lowerCmd.includes('check witness')) { depth = 'Witness Credibility'; action = 'analyze'; }
-      else if (lowerCmd.includes('witness bias') || lowerCmd.includes('bias detection')) { depth = 'Witness Bias Detection'; action = 'analyze'; }
-      else if (lowerCmd.includes('liability') && lowerCmd.includes('analyze')) { depth = 'Liability & Negligence'; action = 'analyze'; }
-      else if (lowerCmd.includes('medical') && (lowerCmd.includes('timeline') || lowerCmd.includes('chronology'))) { depth = 'Medical Chronology'; action = 'analyze'; }
-      else if (lowerCmd.includes('settlement') || lowerCmd.includes('valuation') || lowerCmd.includes('damages')) { depth = 'Settlement Valuation'; action = 'analyze'; }
-      else if (lowerCmd.includes('liar') && lowerCmd.includes('list')) { depth = "Liar's List"; action = 'analyze'; }
-      else if (lowerCmd.includes('bias') && lowerCmd.includes('audit')) { depth = 'Bias & Fact Separation'; action = 'analyze'; }
-      else if ((lowerCmd.includes('generate') || lowerCmd.includes('create')) && lowerCmd.includes('timeline')) { 
-          action = 'visualize'; 
-          userQuery = "Generate a chronological timeline of key events";
-          targetStyle = 'Timeline Visualization';
-          setEvidenceStyle(targetStyle);
-      }
-      else if (lowerCmd.includes('strengths') && (lowerCmd.includes('weaknesses') || lowerCmd.includes('swot') || lowerCmd.includes('strategy'))) {
-          action = 'visualize';
-          userQuery = "Generate a strategic infographic visualization of the case's key strengths and weaknesses";
-          targetStyle = 'Strengths & Weaknesses Visualization';
-          setEvidenceStyle(targetStyle);
-      }
-      else if (lowerCmd.includes('draft') && lowerCmd.includes('memo')) { action = 'draft'; docType = 'Internal Case Memo'; }
-      else if (lowerCmd.includes('draft') && lowerCmd.includes('letter')) { action = 'draft'; docType = 'Demand Letter'; }
+  const removeSource = (id: string) => {
+      setSources(prev => prev.filter(s => s.id !== id));
+  };
 
-      // 2. Add User Message to Chat
-      setChatMessages(prev => [...prev, { id: Date.now().toString(), role: 'user', text: cmd, timestamp: Date.now() }]);
+  // --- INTELLIGENCE CORE ---
+  
+  // Automatic Context Refresh when Sources Change
+  useEffect(() => {
+    const initContext = async () => {
+        if (!isReadingFile && sources.length > 0) {
+            await refreshContext();
+        }
+    };
+    initContext();
+  }, [sources, isReadingFile]);
+
+  const refreshContext = async () => {
+      if (sources.length === 0) return;
+      
       setIsChatTyping(true);
-      setShowCommands(false);
-      setChatInput('');
-
+      
+      // Auto-Detect Context
       try {
-          if (action === 'analyze' && depth) {
-              setChatMessages(prev => [...prev, { 
-                  id: Date.now().toString() + '_processing', 
-                  role: 'model', 
-                  text: `Running protocol: ${depth}...`, 
-                  timestamp: Date.now() 
-              }]);
+          const detection = await detectCaseContext(sources);
+          setContextData(detection);
+          
+          // Re-initialize chat with new context AND Recommended Protocols
+          // This tells the AI what it "suggested" so it can act on it later
+          chatSessionRef.current = createCaseChat(sources, detection.recommendedProtocols);
 
-              const result = await analyzeCaseFile(fileBase64, mimeType, depth);
-              
-              // CREATE FINDING ASSET (Automatically Add to Sidebar)
-              const newFindingAsset: FindingAsset = {
-                  id: Date.now().toString(),
-                  title: depth, // The AI Protocol Name becomes the Asset Title
-                  type: depth,
-                  items: result.findings,
-                  timestamp: Date.now()
-              };
-              setKeyFindings(prev => [newFindingAsset, ...prev]); // Add to top
-
-              if (result.graphData) mergeGraphData(result.graphData);
-              
-              setChatMessages(prev => prev.filter(m => !m.id.endsWith('_processing'))); // Remove processing msg
-              setChatMessages(prev => [...prev, {
-                  id: Date.now().toString(),
-                  role: 'model',
-                  text: `Protocol '${depth}' Complete.\n\nI have extracted ${result.findings.length} new findings and updated the Case Graph.`,
-                  timestamp: Date.now(),
-                  component: { type: 'analysis_result', data: { findings: result.findings } }
-              }]);
-              
-              // Open sidebar if closed to show new asset
-              if (!isSidebarOpen) setIsSidebarOpen(true);
-          } 
-          else if (action === 'visualize') {
-              const prompt = userQuery || "Visualize key evidence";
-              // Pass targetStyle explicitly to ensure we use the overridden value
-              const result = await interrogateCaseFile(prompt, fileBase64, mimeType, tone, targetStyle, 'English');
-              const visualData = await generateEvidenceVisual(result.visualPrompt, aspectRatio, '1K');
-              
-              // CREATE VISUAL ASSET (Automatically Add to Sidebar)
-              const newContent: GeneratedContent = {
-                  id: Date.now().toString(),
-                  type: 'image',
-                  data: visualData,
-                  prompt: prompt,
-                  answer: result.answer,
-                  timestamp: Date.now(),
-                  style: targetStyle // Use the correct style
-              };
-              setGeneratedVisuals(prev => [newContent, ...prev]);
-
-              setChatMessages(prev => [...prev, {
-                  id: Date.now().toString(),
-                  role: 'model',
-                  text: result.answer,
-                  timestamp: Date.now(),
-                  component: { type: 'visual_generated', data: newContent }
-              }]);
-               if (!isSidebarOpen) setIsSidebarOpen(true);
-          }
-          else if (action === 'draft') {
-              // Ensure summary exists before drafting
-              if (!caseSummary) {
-                  throw new Error("Case summary missing. Run initial analysis first.");
-              }
-              setChatMessages(prev => [...prev, { 
-                  id: Date.now().toString() + '_processing', 
-                  role: 'model', 
-                  text: `Drafting document: ${docType}...`, 
-                  timestamp: Date.now() 
-              }]);
-
-              // Gather all findings so far to inform the draft
-              const allFindings = keyFindings.flatMap(f => f.items);
-              const docContent = await generateLegalDocument(caseSummary, allFindings, docType, userQuery);
-              
-              // CREATE DOCUMENT ASSET (Automatically Add to Sidebar)
-              const newDoc: GeneratedDocument = {
-                  id: Date.now().toString(),
-                  title: docType,
-                  type: docType,
-                  content: docContent,
-                  timestamp: Date.now()
-              };
-              setGeneratedDocs(prev => [newDoc, ...prev]);
-              
-              setChatMessages(prev => prev.filter(m => !m.id.endsWith('_processing')));
-              setChatMessages(prev => [...prev, {
-                  id: Date.now().toString(),
-                  role: 'model',
-                  text: `Document '${docType}' drafted and saved to Vault.`,
-                  timestamp: Date.now(),
-                  component: { type: 'doc_generated', data: { title: docType } }
-              }]);
-               if (!isSidebarOpen) setIsSidebarOpen(true);
-          }
-          else {
-              // Standard Chat Fallback
-              sendMessageToGemini(userQuery);
-          }
-      } catch (e) {
-          console.error(e);
-          setChatMessages(prev => prev.filter(m => !m.id.endsWith('_processing')));
-          setChatMessages(prev => [...prev, { id: Date.now().toString(), role: 'model', text: "Error executing command. Please check the logs or try again.", timestamp: Date.now() }]);
+          setChatMessages(prev => [...prev, {
+              id: Date.now().toString(),
+              role: 'model',
+              text: `**Intelligence Updated**\nIdentified Context: ${detection.caseType}.\n\nI have calibrated the following analysis protocols based on the evidence:\n${detection.recommendedProtocols.map(p => `• ${p}`).join('\n')}\n\n${detection.reasoning}`,
+              timestamp: Date.now()
+          }]);
+      } catch (error) {
+          console.error("Context detection failed", error);
+          chatSessionRef.current = createCaseChat(sources); // Fallback init
+          setChatMessages(prev => [...prev, {
+              id: Date.now().toString(),
+              role: 'model',
+              text: "Sources uploaded. Ready for manual interrogation.",
+              timestamp: Date.now()
+          }]);
       } finally {
           setIsChatTyping(false);
       }
   };
 
-  const sendMessageToGemini = async (text: string) => {
-      if (!chatSessionRef.current) return;
+  const runProtocol = async (protocol: string) => {
+      // Execute an analysis protocol and create an artifact
+      setChatMessages(prev => [...prev, { id: Date.now().toString(), role: 'model', text: `Executing Protocol: ${protocol}...`, timestamp: Date.now() }]);
+      setIsChatTyping(true);
       
       try {
-          const result = await chatSessionRef.current.sendMessageStream({ message: text });
-          
-          const botMsgId = (Date.now() + 1).toString();
-          let fullText = '';
-          
-          setChatMessages(prev => [...prev, { id: botMsgId, role: 'model', text: '', timestamp: Date.now() }]);
-    
-          for await (const chunk of result) {
-             const c = chunk as GenerateContentResponse;
-             if (c.text) {
-                 fullText += c.text;
-                 setChatMessages(prev => prev.map(msg => msg.id === botMsgId ? { ...msg, text: fullText } : msg));
+          // Special handling for different types
+          if (protocol.includes('Visual') || protocol.includes('Sketch') || protocol.includes('Diagram')) {
+             // Visual Flow
+             let evidenceStyle: any = 'Technical Diagram';
+             if (protocol.includes('Sketch')) evidenceStyle = 'Crime Scene Sketch';
+             if (protocol.includes('Timeline')) evidenceStyle = 'Timeline Visualization';
+
+             const result = await interrogateCaseFile(`Generate a ${protocol} based on the evidence.`, sources, 'Objective', evidenceStyle, 'English');
+             const imgData = await generateEvidenceVisual(result.visualPrompt, '16:9', '1K');
+             
+             const newArtifact: CaseArtifact = {
+                 id: Date.now().toString(),
+                 title: protocol,
+                 type: 'visual',
+                 summary: result.answer.slice(0, 150) + "...",
+                 data: { image: imgData, fullReport: result.answer },
+                 timestamp: Date.now()
+             };
+             setArtifacts(prev => [newArtifact, ...prev]);
+             setActiveArtifact(newArtifact); // Open Preview immediately
+          } 
+          else if (protocol.includes('Mind Map')) {
+             const graph = await generateMindMapData(sources);
+             const newArtifact: CaseArtifact = {
+                 id: Date.now().toString(),
+                 title: "Investigation Board",
+                 type: 'mindmap',
+                 summary: `Entity Graph with ${graph.nodes.length} nodes and ${graph.edges.length} connections.`,
+                 data: graph,
+                 timestamp: Date.now()
+             };
+             setArtifacts(prev => [newArtifact, ...prev]);
+             setActiveArtifact(newArtifact);
+          }
+          else if (protocol.includes('Draft')) {
+             // Document Drafting Flow
+             // Expected Protocol: "Draft [Type]" or "Draft [Type] | [Instructions]"
+             let docType = protocol.replace('Draft ', '');
+             let instructions = '';
+             
+             if (docType.includes('|')) {
+                 const parts = docType.split('|');
+                 docType = parts[0].trim();
+                 instructions = parts[1].trim();
              }
+
+             const docContent = await generateLegalDocument(sources, docType, instructions);
+             
+             const newArtifact: CaseArtifact = {
+                 id: Date.now().toString(),
+                 title: docType,
+                 type: 'document',
+                 summary: `Drafted ${docType} ${instructions ? `with focus: ${instructions}` : 'based on evidence'}.`,
+                 data: { content: docContent },
+                 timestamp: Date.now()
+             };
+             setArtifacts(prev => [newArtifact, ...prev]);
+             setActiveArtifact(newArtifact);
           }
-    
-          // Suggestions parsing
-          const suggestionMarker = "///SUGGESTIONS///";
-          if (fullText.includes(suggestionMarker)) {
-              const parts = fullText.split(suggestionMarker);
-              const cleanText = parts[0];
-              const suggestions = parts[1].split('|').map(s => s.trim()).filter(s => s.length > 0);
-              setChatMessages(prev => prev.map(msg => msg.id === botMsgId ? { ...msg, text: cleanText.trim(), suggestions } : msg));
+          else {
+              // Standard Text Analysis
+              const result = await analyzeCaseFile(sources, protocol as AnalysisDepth);
+              const newArtifact: CaseArtifact = {
+                  id: Date.now().toString(),
+                  title: protocol,
+                  type: 'report',
+                  summary: result.findings[0] || "Analysis complete.",
+                  data: result,
+                  timestamp: Date.now()
+              };
+              setArtifacts(prev => [newArtifact, ...prev]);
           }
+
+          setChatMessages(prev => [...prev, { id: Date.now().toString(), role: 'model', text: `Protocol Complete. New artifact '${protocol}' added to Studio.`, timestamp: Date.now() }]);
       } catch (e) {
-          console.error("Chat error", e);
-          setChatMessages(prev => [...prev, { id: Date.now().toString(), role: 'model', text: "Connection interrupted. Please try again.", timestamp: Date.now() }]);
+          console.error(e);
+          setChatMessages(prev => [...prev, { id: Date.now().toString(), role: 'model', text: "Error running protocol. Please check the console or try a smaller file.", timestamp: Date.now() }]);
+      } finally {
+          setIsChatTyping(false);
       }
   };
 
-  const handleChatInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const val = e.target.value;
-      setChatInput(val);
-      if (val.startsWith('/')) setShowCommands(true);
-      else setShowCommands(false);
-  };
-
-  const handleGenerateMindMap = async () => {
-     try {
-         const data = await generateMindMapData(fileBase64, mimeType);
-         mergeGraphData(data); // Merge instead of overwrite
-         // Switch asset tab to graph handled in sidebar
-         executeCommand("Full Mind Map generated and merged into the Graph tab.");
-     } catch(e) { console.error(e); }
-  };
-
-  // --- RENDERERS ---
-
-  const renderStreamComponent = (comp: StreamComponent) => {
-      if (comp.type === 'auto_protocol_start') {
-          return (
-             <div className="mt-2 p-3 bg-indigo-50 border border-indigo-200 rounded-lg animate-in zoom-in">
-                 <div className="flex items-center gap-2 mb-2">
-                     <Zap className="w-4 h-4 text-indigo-600" />
-                     <span className="text-[10px] font-bold uppercase tracking-widest text-indigo-600">Auto-Discovery Protocol</span>
-                 </div>
-                 <div className="text-xs text-slate-700">
-                    <p className="font-bold mb-1">Detected Context: {comp.data.caseType}</p>
-                    <ul className="list-disc pl-4 space-y-1 mt-1">
-                        {comp.data.recommendedProtocols.map((p:string, i:number) => (
-                            <li key={i}>{p}</li>
-                        ))}
-                    </ul>
-                 </div>
-             </div>
-          );
+  const sendMessage = async () => {
+      if (!chatInput.trim() || !chatSessionRef.current) return;
+      
+      const userMsg = chatInput;
+      setChatInput('');
+      setChatMessages(prev => [...prev, { id: Date.now().toString(), role: 'user', text: userMsg, timestamp: Date.now() }]);
+      
+      // --- SLASH COMMANDS ---
+      if (userMsg.toLowerCase().startsWith('/draft')) {
+          const raw = userMsg.slice(6).trim(); // Remove '/draft'
+          // Format: "/draft Demand Letter: Focus on injury"
+          const [docType, instr] = raw.includes(':') ? raw.split(':') : [raw, ''];
+          
+          runProtocol(`Draft ${docType || 'Legal Document'} | ${instr || ''}`);
+          return;
       }
-      if (comp.type === 'analysis_result') {
-          return (
-              <div className="mt-2 p-3 bg-white border border-slate-200 rounded-lg animate-in zoom-in shadow-sm">
-                  <div className="flex items-center gap-2 mb-2">
-                      <Shield className="w-4 h-4 text-indigo-600" />
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-indigo-600">Analysis Output</span>
-                  </div>
-                  {comp.data.synopsis && <p className="text-xs text-slate-600 italic mb-2">"{comp.data.synopsis}"</p>}
-                  {comp.data.findings && (
-                      <ul className="list-disc pl-4 space-y-1">
-                          {comp.data.findings.slice(0, 3).map((f:string, i:number) => (
-                              <li key={i} className="text-[10px] text-slate-700 font-mono">{f}</li>
-                          ))}
-                      </ul>
-                  )}
-              </div>
-          );
-      }
-      if (comp.type === 'visual_generated') {
-          return (
-              <div className="mt-2 rounded-lg overflow-hidden border border-slate-200 shadow-sm relative group animate-in zoom-in">
-                  <img src={comp.data.data} className="w-full h-32 object-cover" />
-                  <div className="absolute inset-0 bg-black/20 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                      <span className="text-xs font-bold text-white drop-shadow-md">View in Asset Vault</span>
-                  </div>
-              </div>
-          );
-      }
-      return null;
-  };
+      
+      setIsChatTyping(true);
 
-  if (workflowStep === 'upload') {
-      return (
-        <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 relative overflow-hidden">
-            {/* Minimal Background */}
-            <div className="fixed inset-0 overflow-hidden pointer-events-none">
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-indigo-50/50 via-white to-white"></div>
-                <div className="absolute inset-0 bg-grid-slate-900/[0.03] bg-[length:32px_32px]"></div>
-            </div>
+      try {
+          const result = await chatSessionRef.current.sendMessageStream({ message: userMsg });
+          
+          let fullText = '';
+          const botId = Date.now().toString();
+          setChatMessages(prev => [...prev, { id: botId, role: 'model', text: '', timestamp: Date.now() }]);
+
+          for await (const chunk of result) {
+              if (chunk.text) {
+                  fullText += chunk.text;
+                  setChatMessages(prev => prev.map(m => m.id === botId ? { ...m, text: fullText } : m));
+              }
+          }
+          
+          // --- POST-PROCESSING ---
+          
+          // 1. Extract Suggestions
+          const suggestionRegex = /\/\/\/SUGGESTIONS\/\/\/(.*)/;
+          const matchSuggestions = fullText.match(suggestionRegex);
+          let extractedSuggestions: string[] = [];
+          
+          if (matchSuggestions && matchSuggestions[1]) {
+              extractedSuggestions = matchSuggestions[1].split('|').map(s => s.trim());
+              fullText = fullText.replace(suggestionRegex, ''); // Remove from displayed text
+          }
+
+          // 2. Extract Action Codes
+          const actionRegex = /\[\[EXECUTE:(.*?)\]\]/g;
+          let match;
+          const actionsToRun = [];
+          
+          // Copy text for regex matching to avoid issues with mutation
+          const textForActions = fullText; 
+          while ((match = actionRegex.exec(textForActions)) !== null) {
+              actionsToRun.push(match[1]);
+          }
+          
+          fullText = fullText.replace(actionRegex, ''); // Remove actions from displayed text
+
+          // 3. Update Message State with Cleaned Text & Suggestions
+          setChatMessages(prev => prev.map(m => m.id === botId ? { 
+              ...m, 
+              text: fullText.trim(),
+              suggestions: extractedSuggestions
+          } : m));
+
+          // 4. Trigger Actions
+          if (actionsToRun.length > 0) {
+              console.log("AI TRIGGERED ACTIONS:", actionsToRun);
+              actionsToRun.forEach(protocol => runProtocol(protocol));
+          }
+
+      } catch (e) {
+          console.error(e);
+      } finally {
+          setIsChatTyping(false);
+      }
+  };
+  
+  // Helper for suggestion clicks
+  const sendSuggestion = (text: string) => {
+      // Direct send logic bypassing chatInput state dependency for the initial trigger
+      if (!chatSessionRef.current) return;
+      setChatMessages(prev => [...prev, { id: Date.now().toString(), role: 'user', text: text, timestamp: Date.now() }]);
+      setIsChatTyping(true);
+      
+      (async () => {
+        try {
+            const result = await chatSessionRef.current!.sendMessageStream({ message: text });
+            let fullText = '';
+            const botId = Date.now().toString();
+            setChatMessages(prev => [...prev, { id: botId, role: 'model', text: '', timestamp: Date.now() }]);
+
+            for await (const chunk of result) {
+                if (chunk.text) {
+                    fullText += chunk.text;
+                    setChatMessages(prev => prev.map(m => m.id === botId ? { ...m, text: fullText } : m));
+                }
+            }
             
-            {showIntro ? <IntroScreen onComplete={() => setShowIntro(false)} /> : (
-            <div className="glass-panel max-w-xl w-full p-10 rounded-2xl flex flex-col items-center gap-8 animate-in fade-in slide-in-up z-10 border-slate-200">
-                 <div className="text-center space-y-2">
-                     <h1 className="text-3xl font-display font-bold text-slate-900 uppercase tracking-widest">Case File <span className="text-indigo-600">Interrogator</span></h1>
-                     <p className="text-xs font-mono text-slate-500 tracking-[0.3em]">INTELLIGENCE-FIRST LEGAL FORENSICS</p>
-                 </div>
-                 
-                 <div 
-                    onClick={() => !isReadingFile && fileInputRef.current?.click()}
-                    className={`w-full h-48 border-2 border-dashed rounded-xl flex flex-col items-center justify-center gap-4 cursor-pointer transition-all ${file ? 'border-indigo-500/50 bg-indigo-50/50' : 'border-slate-300 hover:border-indigo-400 hover:bg-slate-50'} ${isReadingFile ? 'opacity-50 cursor-wait' : ''}`}
-                 >
-                     <input ref={fileInputRef} type="file" onChange={handleFileUpload} className="hidden" accept="application/pdf, text/plain, image/*" />
-                     {isReadingFile ? (
-                        <>
-                            <Loader2 className="w-12 h-12 text-indigo-600 animate-spin" />
-                            <span className="font-mono text-xs text-indigo-600 uppercase animate-pulse">Ingesting File Data...</span>
-                        </>
-                     ) : file ? (
-                         <>
-                            <FileText className="w-12 h-12 text-indigo-600" />
-                            <span className="font-mono text-sm text-slate-900">{file.name}</span>
-                         </>
-                     ) : (
-                         <>
-                            <UploadCloud className="w-12 h-12 text-slate-400" />
-                            <span className="font-mono text-xs text-slate-500 uppercase">Drop Case File to Initialize</span>
-                         </>
-                     )}
-                 </div>
+             // Extract Suggestions
+            const suggestionRegex = /\/\/\/SUGGESTIONS\/\/\/(.*)/;
+            const matchSuggestions = fullText.match(suggestionRegex);
+            let extractedSuggestions: string[] = [];
+            
+            if (matchSuggestions && matchSuggestions[1]) {
+                extractedSuggestions = matchSuggestions[1].split('|').map(s => s.trim());
+                fullText = fullText.replace(suggestionRegex, '');
+            }
 
-                 <button 
-                    disabled={!file || isReadingFile}
-                    onClick={initializeDashboard}
-                    className="w-full btn-primary py-4 rounded-lg font-bold uppercase tracking-[0.2em] flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                 >
-                    {isReadingFile ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />} 
-                    {isReadingFile ? 'Processing...' : 'Initialize Dashboard'}
-                 </button>
-            </div>
-            )}
-        </div>
-      );
-  }
+            // Extract Action Codes
+            const actionRegex = /\[\[EXECUTE:(.*?)\]\]/g;
+            let match;
+            const actionsToRun = [];
+            const textForActions = fullText; 
+            while ((match = actionRegex.exec(textForActions)) !== null) {
+                actionsToRun.push(match[1]);
+            }
+            fullText = fullText.replace(actionRegex, '');
 
-  // DASHBOARD VIEW
+            setChatMessages(prev => prev.map(m => m.id === botId ? { 
+                ...m, 
+                text: fullText.trim(),
+                suggestions: extractedSuggestions
+            } : m));
+
+            if (actionsToRun.length > 0) {
+                actionsToRun.forEach(protocol => runProtocol(protocol));
+            }
+        } catch (e) { console.error(e); } 
+        finally { setIsChatTyping(false); }
+      })();
+  };
+
+  // --- RENDER ---
+  if (showIntro) return <IntroScreen onComplete={() => setShowIntro(false)} />;
+
   return (
     <div className="flex h-screen bg-slate-50 text-slate-900 font-sans overflow-hidden">
         {!checkingKey && !hasApiKey && (
-             <div className="fixed inset-0 z-[200] bg-black/90 flex items-center justify-center"><button onClick={handleSelectKey} className="btn-primary px-8 py-4 rounded uppercase">Authenticate API Key</button></div>
+             <div className="fixed inset-0 z-[200] bg-black/90 flex items-center justify-center"><button onClick={async () => { await window.aistudio.openSelectKey(); setHasApiKey(true); }} className="btn-primary px-8 py-4 rounded uppercase">Authenticate</button></div>
         )}
 
-        {/* LEFT COLUMN: INTELLIGENCE STREAM */}
-        <div className="flex-1 flex flex-col relative border-r border-slate-200 bg-white">
-            {/* Header */}
-            <header className="h-16 border-b border-slate-100 bg-white/80 backdrop-blur flex items-center justify-between px-6 z-20">
+        {/* COLUMN 1: EVIDENCE LOCKER (Collapsible) */}
+        <div className={`
+            flex-shrink-0 bg-slate-50 border-r border-slate-200 z-20 transition-all duration-300 absolute md:static h-full shadow-lg md:shadow-none
+            ${isLeftPanelOpen ? 'w-64 translate-x-0' : 'w-0 -translate-x-full md:w-0 md:translate-x-0 overflow-hidden opacity-0 md:opacity-100'}
+        `}>
+            <div className="w-64 h-full"> {/* Inner wrapper to maintain width during transitions */}
+                <SourcePanel 
+                    sources={sources} 
+                    onUpload={handleFileUpload} 
+                    onRemove={removeSource} 
+                    onToggleSelect={toggleSourceSelection} 
+                    isReading={isReadingFile} 
+                />
+            </div>
+        </div>
+
+        {/* COLUMN 2: INTELLIGENCE STREAM (Main) */}
+        <div className="flex-1 flex flex-col bg-white border-r border-slate-200 relative min-w-0">
+             <header className="h-16 border-b border-slate-100 flex items-center px-4 md:px-6 justify-between flex-shrink-0">
                 <div className="flex items-center gap-3">
-                    <Shield className="w-5 h-5 text-indigo-600" />
-                    <span className="font-display font-bold text-sm tracking-widest text-slate-900 uppercase">Intelligence Stream</span>
-                </div>
-                <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                    <span className="text-[10px] font-mono text-slate-400">ONLINE</span>
-                </div>
-            </header>
-
-            {/* Chat Stream */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-hide bg-slate-50/50">
-                {chatMessages.map((msg) => (
-                    <div key={msg.id} className={`flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''} animate-in fade-in slide-in-up`}>
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 shadow-sm ${msg.role === 'user' ? 'bg-slate-200 text-slate-600' : 'bg-indigo-600 text-white'}`}>
-                            {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
-                        </div>
-                        <div className="max-w-[80%] space-y-2">
-                            <div className={`p-4 rounded-lg text-sm font-medium leading-relaxed whitespace-pre-wrap shadow-sm ${msg.role === 'user' ? 'bg-white text-slate-800 border border-slate-200' : 'bg-indigo-50 text-slate-800 border border-indigo-100'}`}>
-                                {msg.text}
-                            </div>
-                            {msg.component && renderStreamComponent(msg.component)}
-                            {msg.suggestions && (
-                                <div className="flex flex-wrap gap-2">
-                                    {msg.suggestions.map((s, i) => (
-                                        <button key={i} onClick={() => executeCommand(s)} className="px-3 py-1 rounded-full border border-indigo-200 bg-white text-[10px] text-indigo-600 uppercase hover:bg-indigo-50 hover:border-indigo-300 transition-colors flex items-center gap-1 shadow-sm font-medium">
-                                            {s} <ChevronRight className="w-2 h-2" />
-                                        </button>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                ))}
-                {isChatTyping && (
-                    <div className="flex gap-4">
-                         <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center"><Bot className="w-4 h-4 text-white" /></div>
-                         <div className="flex items-center gap-1 h-10 px-4 bg-white rounded-lg border border-slate-200 shadow-sm"><div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce"></div><div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce delay-100"></div><div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce delay-200"></div></div>
-                    </div>
-                )}
-                <div ref={chatEndRef} />
-            </div>
-
-            {/* Command Input */}
-            <div className="p-4 bg-white border-t border-slate-200 relative z-30 shadow-[0_-5px_20px_rgba(0,0,0,0.02)]">
-                {showCommands && (
-                    <div className="absolute bottom-full left-4 mb-2 w-64 bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden animate-in fade-in slide-in-up">
-                        <div className="p-2 bg-slate-50 border-b border-slate-100 text-[10px] font-bold text-slate-400 uppercase">Available Protocols</div>
-                        {SUGGESTED_COMMANDS.filter(c => c.cmd.includes(chatInput)).map((cmd, i) => (
-                            <button key={i} onClick={() => executeCommand(cmd.cmd)} className="w-full text-left px-4 py-3 hover:bg-slate-50 flex items-center justify-between group">
-                                <div>
-                                    <span className="block text-xs font-bold text-indigo-600 group-hover:text-indigo-800">{cmd.label}</span>
-                                    <span className="block text-[10px] text-slate-400 font-mono">{cmd.desc}</span>
-                                </div>
-                                <Command className="w-3 h-3 text-slate-300 group-hover:text-indigo-400" />
-                            </button>
-                        ))}
-                    </div>
-                )}
-                <div className="relative">
-                    <input 
-                        value={chatInput}
-                        onChange={handleChatInputChange}
-                        onKeyDown={(e) => { if(e.key === 'Enter') executeCommand(chatInput); }}
-                        placeholder="Ask a question or type '/' for protocols..."
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-10 pr-12 py-4 text-sm font-medium text-slate-800 focus:bg-white focus:border-indigo-400 outline-none placeholder:text-slate-400 shadow-inner transition-all"
-                    />
-                    <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-indigo-400" />
-                    <button onClick={() => executeCommand(chatInput)} disabled={!chatInput.trim()} className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded transition-colors disabled:opacity-30">
-                        <Send className="w-4 h-4" />
+                    <button onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)} className="md:hidden p-2 hover:bg-slate-100 rounded text-slate-500">
+                        <Menu className="w-5 h-5" />
                     </button>
+                    <Shield className="w-4 h-4 text-indigo-600 hidden sm:block" />
+                    <span className="font-bold text-sm tracking-widest uppercase truncate">Interrogation Stream</span>
                 </div>
+                <div className="flex items-center gap-3">
+                     <div className="flex items-center gap-2">
+                        <span className={`w-2 h-2 rounded-full ${chatSessionRef.current ? 'bg-green-500' : 'bg-slate-300'}`}></span>
+                        <span className="text-[10px] font-mono text-slate-500 uppercase hidden sm:inline">{chatSessionRef.current ? 'Online' : 'Offline'}</span>
+                     </div>
+                     <div className="h-4 w-px bg-slate-200 mx-2 hidden sm:block"></div>
+                     <button 
+                        onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
+                        className={`p-2 rounded-md transition-colors ${isRightPanelOpen ? 'bg-indigo-50 text-indigo-600' : 'text-slate-400 hover:bg-slate-50'}`}
+                        title="Toggle Case Studio"
+                     >
+                        {isRightPanelOpen ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
+                     </button>
+                </div>
+             </header>
+             
+             <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 scrollbar-hide">
+                 {sources.length === 0 ? (
+                     <div className="flex flex-col items-center justify-center h-full text-slate-400 text-center px-4">
+                         <Bot className="w-12 h-12 mb-4 opacity-20" />
+                         <p className="text-sm font-medium">Waiting for evidence...</p>
+                         <p className="text-xs">Upload files to the Evidence Locker to begin.</p>
+                     </div>
+                 ) : (
+                    <>
+                        {chatMessages.map(msg => (
+                            <div key={msg.id} className={`flex flex-col gap-2 animate-in fade-in slide-in-up ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                                <div className={`flex gap-3 md:gap-4 max-w-[95%] md:max-w-[85%] ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
+                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${msg.role === 'user' ? 'bg-slate-100' : 'bg-indigo-600 text-white shadow-md'}`}>
+                                        {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
+                                    </div>
+                                    <div className={`p-3 md:p-4 rounded-lg text-sm leading-relaxed whitespace-pre-wrap shadow-sm ${msg.role === 'user' ? 'bg-white border border-slate-200' : 'bg-indigo-50 border border-indigo-100 text-slate-800'}`}>
+                                        {/* Clean the text for display (hide action codes and suggestions if any remained) */}
+                                        {msg.text.replace(/\[\[EXECUTE:.*?\]\]/g, '').replace(/\/\/\/SUGGESTIONS\/\/\/.*$/, '').trim()}
+                                    </div>
+                                </div>
+                                
+                                {/* Render Suggestions Chips if available */}
+                                {msg.suggestions && msg.suggestions.length > 0 && (
+                                    <div className="flex flex-wrap gap-2 ml-12 max-w-[85%] animate-in fade-in delay-200">
+                                        {msg.suggestions.map((s, i) => (
+                                            <button 
+                                                key={i} 
+                                                onClick={() => sendSuggestion(s)}
+                                                className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-indigo-200 text-indigo-600 rounded-full text-[10px] font-bold uppercase tracking-wide hover:bg-indigo-50 hover:border-indigo-300 transition-all shadow-sm"
+                                            >
+                                                <Sparkles className="w-3 h-3" />
+                                                {s}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                        {isChatTyping && (
+                            <div className="flex gap-4">
+                                <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0">
+                                    <Bot className="w-4 h-4 text-white" />
+                                </div>
+                                <div className="flex items-center gap-1 p-4 bg-indigo-50 rounded-lg border border-indigo-100">
+                                    <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce"></div>
+                                    <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce delay-100"></div>
+                                    <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce delay-200"></div>
+                                </div>
+                            </div>
+                        )}
+                        <div ref={chatEndRef} />
+                    </>
+                 )}
+             </div>
+
+             <div className="p-4 border-t border-slate-100 bg-white z-20">
+                 <div className="relative">
+                     <input 
+                        value={chatInput} 
+                        onChange={(e) => setChatInput(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+                        placeholder="Interrogate the evidence or /draft..." 
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-4 pr-12 py-3 text-sm focus:outline-none focus:border-indigo-400 focus:bg-white transition-all shadow-inner"
+                        disabled={sources.length === 0}
+                     />
+                     <button 
+                        onClick={sendMessage} 
+                        disabled={!chatInput.trim() || sources.length === 0}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-indigo-600 hover:bg-indigo-50 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                     >
+                         <Send className="w-4 h-4" />
+                     </button>
+                 </div>
+                 <div className="px-1 pt-1 text-[10px] text-slate-400 font-mono">
+                    Try: <span className="text-indigo-500">/draft Demand Letter: Focus on injury</span>
+                 </div>
+             </div>
+        </div>
+
+        {/* COLUMN 3: CASE STUDIO (Responsive) */}
+        <div className={`
+            flex-shrink-0 bg-slate-50 z-10 border-l border-slate-200 transition-all duration-300 ease-in-out
+            ${isRightPanelOpen ? 'w-80 lg:w-96 translate-x-0' : 'w-0 translate-x-full overflow-hidden opacity-0'}
+            absolute right-0 top-0 bottom-0 lg:static h-full shadow-2xl lg:shadow-none
+        `}>
+            <div className="w-80 lg:w-96 h-full"> {/* Inner wrapper */}
+                <CaseStudio 
+                    artifacts={artifacts} 
+                    recommendedProtocols={contextData.recommendedProtocols}
+                    onRunProtocol={runProtocol}
+                    onOpenArtifact={setActiveArtifact}
+                />
             </div>
         </div>
 
-        {/* RIGHT COLUMN: ASSET VAULT */}
-        <div className={`w-[450px] flex-shrink-0 transition-all duration-500 border-l border-slate-200 bg-slate-50 ${isSidebarOpen ? 'translate-x-0' : 'translate-x-full hidden'}`}>
-             <AssetSidebar 
-                summary={caseSummary}
-                findings={keyFindings}
-                visuals={generatedVisuals}
-                documents={generatedDocs}
-                precedents={casePrecedents}
-                mindMapData={mindMapData}
-                onEditVisual={(prompt) => executeCommand(`/visualize ${prompt}`)}
-                onGenerateMindMap={handleGenerateMindMap}
-                onNodeClick={(node) => executeCommand(`Tell me about ${node.label}`)}
-             />
-        </div>
+        {/* PREVIEW OVERLAY (FOCUS MODE) */}
+        {activeArtifact && (
+            <div className="fixed inset-0 z-50 bg-white/95 backdrop-blur-sm flex flex-col animate-in fade-in">
+                <div className="h-16 border-b border-slate-200 flex items-center justify-between px-8 bg-white">
+                    <div className="flex items-center gap-3">
+                        <div className="p-2 bg-indigo-50 rounded">
+                             {/* Icon based on type */}
+                             <Bot className="w-5 h-5 text-indigo-600" />
+                        </div>
+                        <div>
+                            <h2 className="text-lg font-bold text-slate-800">{activeArtifact.title}</h2>
+                            <p className="text-xs text-slate-500 font-mono uppercase tracking-widest">{activeArtifact.type}</p>
+                        </div>
+                    </div>
+                    <button onClick={() => setActiveArtifact(null)} className="p-2 hover:bg-slate-100 rounded-full"><X className="w-6 h-6 text-slate-500" /></button>
+                </div>
+                
+                <div className="flex-1 overflow-auto p-8 bg-slate-50 flex justify-center">
+                    <div className="w-full max-w-5xl">
+                        {activeArtifact.type === 'mindmap' && (
+                             <div className="h-[600px] border border-slate-200 rounded-xl overflow-hidden bg-white shadow-lg">
+                                 <MindMap data={activeArtifact.data} onNodeClick={() => {}} onClose={() => setActiveArtifact(null)} />
+                             </div>
+                        )}
+                        {activeArtifact.type === 'visual' && (
+                             <Infographic 
+                                content={{ 
+                                    id: activeArtifact.id, type: 'image', data: activeArtifact.data.image, 
+                                    prompt: activeArtifact.title, answer: activeArtifact.data.fullReport, timestamp: Date.now() 
+                                }} 
+                                onEdit={() => {}} isEditing={false} 
+                             />
+                        )}
+                        {activeArtifact.type === 'document' && (
+                             <div className="bg-white p-10 shadow-lg rounded-xl border border-slate-200 max-w-3xl mx-auto">
+                                <div className="flex justify-end mb-4 gap-2">
+                                    <button onClick={() => navigator.clipboard.writeText(activeArtifact.data.content)} className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-slate-500 hover:bg-slate-100 rounded border border-slate-200"><Clipboard className="w-3 h-3" /> Copy</button>
+                                    <button className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-slate-500 hover:bg-slate-100 rounded border border-slate-200"><Download className="w-3 h-3" /> Download</button>
+                                </div>
+                                <div className="prose prose-slate max-w-none whitespace-pre-wrap font-serif">
+                                    {activeArtifact.data.content}
+                                </div>
+                             </div>
+                        )}
+                        {activeArtifact.type === 'report' && (
+                            <div className="bg-white p-10 shadow-lg rounded-xl border border-slate-200 max-w-3xl mx-auto prose prose-slate">
+                                <h3 className="uppercase tracking-widest text-sm font-bold text-indigo-600 border-b pb-4 mb-6">Confidential Analysis Findings</h3>
+                                <ul className="space-y-4">
+                                    {activeArtifact.data.findings.map((f: string, i: number) => (
+                                        <li key={i} className="text-slate-800">{f}</li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        )}
+
     </div>
   );
 };
