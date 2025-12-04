@@ -66,10 +66,10 @@ const App: React.FC = () => {
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files && e.target.files.length > 0) {
           setIsReadingFile(true);
-          const newFiles = Array.from(e.target.files);
+          const newFiles: File[] = Array.from(e.target.files);
           
           let processedCount = 0;
-          newFiles.forEach(file => {
+          newFiles.forEach((file: File) => {
               const reader = new FileReader();
               reader.onload = (ev) => {
                   const newSource: CaseSource = {

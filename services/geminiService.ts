@@ -91,7 +91,25 @@ const fileToPart = (base64Data: string, mimeType: string) => {
 
 const cleanJsonString = (str: string) => {
   if (!str) return "{}";
-  return str.replace(/```json\n?|\n?```/g, "").trim();
+  // Remove markdown code blocks and any surrounding text
+  let cleaned = str.replace(/```json\n?|\n?```/g, "").trim();
+  
+  // Robustly extract JSON object
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  
+  if (firstBrace !== -1 && lastBrace !== -1) {
+    cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+  } else {
+    // Maybe it returned an array directly?
+    const firstBracket = cleaned.indexOf('[');
+    const lastBracket = cleaned.lastIndexOf(']');
+    if (firstBracket !== -1 && lastBracket !== -1) {
+        cleaned = cleaned.substring(firstBracket, lastBracket + 1);
+    }
+  }
+  
+  return cleaned;
 };
 
 // --- MULTI-SOURCE HELPER ---
@@ -163,19 +181,22 @@ export const detectCaseContext = async (sources: CaseSource[]): Promise<CaseCont
     try {
         const cleanText = cleanJsonString(response.text || "{}");
         const result = JSON.parse(cleanText) || {};
-        return {
-            caseType: result.caseType || "General Litigation",
-            recommendedProtocols: Array.isArray(result.recommendedProtocols) ? result.recommendedProtocols : ['Initial Case Assessment'],
-            reasoning: result.reasoning || "Standard analysis."
-        };
+        // Safety check result
+        if (result && result.caseType) {
+            return {
+                caseType: result.caseType || "General Litigation",
+                recommendedProtocols: Array.isArray(result.recommendedProtocols) ? result.recommendedProtocols : ['Initial Case Assessment'],
+                reasoning: result.reasoning || "Standard analysis."
+            };
+        }
+        throw new Error("Invalid structure");
     } catch (e) {
-        return { caseType: "Unknown", recommendedProtocols: ['Initial Case Assessment'], reasoning: "Classification failed." };
+        return { caseType: "Reviewing...", recommendedProtocols: ['Initial Case Assessment'], reasoning: "Classification in progress." };
     }
 };
 
 export const analyzeCaseFile = async (sources: CaseSource[], depth: AnalysisDepth): Promise<{ findings: string[], summary: CaseSummary, precedents: SearchResultItem[], graphData?: MindMapData }> => {
   let focusInstruction = "";
-  // ... (Keep existing switch logic for focusInstruction, verbatim)
   switch (depth) {
     case 'Witness Credibility':
     case "Liar's List": focusInstruction = "Focus EXCLUSIVELY on Section 3 (The 'Liar's List'). Identify every contradiction between witness statements, police reports, and physical evidence. Rank witnesses by reliability."; break;
@@ -204,16 +225,37 @@ export const analyzeCaseFile = async (sources: CaseSource[], depth: AnalysisDept
   const config = { responseMimeType: "application/json", safetySettings: SAFETY_SETTINGS }; 
 
   try {
-      const response = await getAi().models.generateContent({
-        model: REASONING_MODEL,
-        contents: { parts: [...contextParts, { text: prompt }] },
-        config: config
-      });
-      
-      const cleanText = cleanJsonString(response.text || "{}");
-      const result = JSON.parse(cleanText) || {};
-      
-      const findings = Array.isArray(result.findings) ? result.findings.map(String).filter((f: string) => f.length > 5) : [];
+      // Retry Logic for High-Reasoning Model
+      try {
+          const response = await getAi().models.generateContent({
+            model: REASONING_MODEL,
+            contents: { parts: [...contextParts, { text: prompt }] },
+            config: config
+          });
+          const cleanText = cleanJsonString(response.text || "{}");
+          const result = JSON.parse(cleanText) || {};
+          return processAnalysisResult(result);
+      } catch (innerError) {
+          console.warn("Reasoning model failed, falling back to Flash...", innerError);
+          // Fallback to Flash model
+          const response = await getAi().models.generateContent({
+            model: ANALYSIS_MODEL,
+            contents: { parts: [...contextParts, { text: prompt }] },
+            config: config
+          });
+          const cleanText = cleanJsonString(response.text || "{}");
+          const result = JSON.parse(cleanText) || {};
+          return processAnalysisResult(result);
+      }
+
+  } catch (e) {
+      console.error(e);
+      throw new Error("Analysis failed");
+  }
+};
+
+const processAnalysisResult = (result: any) => {
+    const findings = Array.isArray(result.findings) ? result.findings.map(String).filter((f: string) => f.length > 5) : [];
       const rawSummary = result.summary || {};
       const summary = {
           parties: rawSummary.parties || "Unknown",
@@ -224,19 +266,13 @@ export const analyzeCaseFile = async (sources: CaseSource[], depth: AnalysisDept
           tags: Array.isArray(rawSummary.tags) ? rawSummary.tags : []
       };
       
-      // Safe parsing for graphData
       let graphData = undefined;
-      if (result.graphData && Array.isArray(result.graphData.nodes)) {
+      if (result.graphData && Array.isArray(result.graphData.nodes) && result.graphData.nodes.length > 0) {
           graphData = result.graphData;
       }
       
       return { findings, summary, precedents: [], graphData };
-
-  } catch (e) {
-      console.error(e);
-      throw new Error("Analysis failed");
-  }
-};
+}
 
 export const generateMindMapData = async (sources: CaseSource[]): Promise<MindMapData> => {
   const prompt = `
@@ -244,18 +280,19 @@ export const generateMindMapData = async (sources: CaseSource[]): Promise<MindMa
     TASK: Generate a DEEP FORENSIC INVESTIGATION GRAPH based on the provided evidence.
     
     Structure the output as a valid JSON object with two arrays: "nodes" and "edges".
+    Do NOT use Markdown formatting. Return raw JSON.
     
     Nodes Schema:
     {
       "id": "unique_string_id",
-      "label": "Short Name (e.g. 'John Doe')",
+      "label": "Short Name",
       "type": "case" | "person" | "evidence" | "location" | "event",
-      "description": "Detailed description of the entity's relevance to the case.",
+      "description": "Short description of relevance.",
       "metadata": {
-        "role": "e.g., Plaintiff, Witness, Suspect",
-        "impactScore": 1-10 (number),
-        "tags": ["Tag1", "Tag2"],
-        "keyQuote": "Direct quote if applicable"
+        "role": "e.g., Plaintiff, Witness",
+        "impactScore": 5,
+        "tags": ["Tag1"],
+        "keyQuote": "Short quote"
       }
     }
     
@@ -263,27 +300,56 @@ export const generateMindMapData = async (sources: CaseSource[]): Promise<MindMa
     {
       "source": "node_id_1",
       "target": "node_id_2",
-      "relation": "verb phrase describing connection (e.g., 'contradicts', 'witnessed', 'located at')"
+      "relation": "verb"
     }
     
     Requirements:
     1. Start with a central node for the Case itself (type: 'case').
-    2. Ensure the graph is fully connected (no orphan nodes).
-    3. Extract at least 5-10 key entities.
+    2. Extract at least 8 key entities (nodes).
+    3. Ensure 'impactScore' is 1-10.
   `;
-  const response = await getAi().models.generateContent({
-    model: REASONING_MODEL,
-    contents: { parts: [...prepareContextParts(sources), { text: prompt }] },
-    config: { responseMimeType: "application/json", safetySettings: SAFETY_SETTINGS }
-  });
   
-  const cleanText = cleanJsonString(response.text || "{}");
-  const data = JSON.parse(cleanText) || {};
-  
-  return {
-    nodes: Array.isArray(data.nodes) ? data.nodes : [],
-    edges: Array.isArray(data.edges) ? data.edges : []
-  };
+  const contextParts = prepareContextParts(sources);
+  const config = { responseMimeType: "application/json", safetySettings: SAFETY_SETTINGS };
+
+  try {
+     // Attempt with Pro model first
+     const response = await getAi().models.generateContent({
+        model: REASONING_MODEL,
+        contents: { parts: [...contextParts, { text: prompt }] },
+        config: config
+     });
+     
+     const cleanText = cleanJsonString(response.text || "{}");
+     const data = JSON.parse(cleanText);
+     
+     if (data && Array.isArray(data.nodes) && data.nodes.length > 0) {
+         return { nodes: data.nodes, edges: data.edges || [] };
+     }
+     throw new Error("Empty graph data from Pro model");
+     
+  } catch (e) {
+      console.warn("Pro model mind map failed, attempting fallback...", e);
+      try {
+          // Fallback to Flash model
+          const response = await getAi().models.generateContent({
+            model: ANALYSIS_MODEL,
+            contents: { parts: [...contextParts, { text: prompt }] },
+            config: config
+         });
+         const cleanText = cleanJsonString(response.text || "{}");
+         const data = JSON.parse(cleanText);
+         
+         if (data && Array.isArray(data.nodes)) {
+             return { nodes: data.nodes, edges: data.edges || [] };
+         }
+      } catch (innerE) {
+          console.error("Fallback mind map failed", innerE);
+      }
+  }
+
+  // Return empty structure if all fails to prevent crashes
+  return { nodes: [], edges: [] };
 };
 
 export const interrogateCaseFile = async (question: string, sources: CaseSource[], tone: Tone, style: EvidenceType, language: Language): Promise<InterrogationResult> => {
@@ -293,19 +359,28 @@ export const interrogateCaseFile = async (question: string, sources: CaseSource[
     ${SENIOR_ASSOCIATE_PROMPT}
     USER QUERY: "${question}"
     TASK 1: Answer text. TASK 2: Visual Prompt (${styleInstr}). TASK 3: Key Entities.
+    OUTPUT JSON format: { "answer": "...", "visualPrompt": "...", "keyEntities": ["..."] }
   `;
   const response = await getAi().models.generateContent({
     model: REASONING_MODEL,
     contents: { parts: [...prepareContextParts(sources), { text: systemPrompt }] },
-    config: { tools: [{ googleSearch: {} }], responseMimeType: "application/json", safetySettings: SAFETY_SETTINGS }
+    config: { tools: [{ googleSearch: {} }], safetySettings: SAFETY_SETTINGS }
   });
   
   const result = JSON.parse(cleanJsonString(response.text || "{}")) || {};
+  
+  const searchResults: SearchResultItem[] = response.candidates?.[0]?.groundingMetadata?.groundingChunks
+    ?.map((c: any) => ({
+        title: c.web?.title || "Reference",
+        url: c.web?.uri || ""
+    }))
+    .filter((r: SearchResultItem) => r.url) || [];
+
   return { 
     answer: result.answer || "No response generated.", 
     visualPrompt: result.visualPrompt || "Forensic visualization", 
     keyEntities: Array.isArray(result.keyEntities) ? result.keyEntities : [], 
-    searchResults: [] 
+    searchResults: searchResults
   };
 };
 
@@ -347,4 +422,4 @@ export const generateLegalDocument = async (sources: CaseSource[], docType: Docu
 };
 
 export const editEvidenceVisual = async (currentImageBase64: string, editInstruction: string): Promise<string> => { return ""; } 
-export const extendReenactmentVideo = async (previousMetadata: any, prompt: string, aspectRatio: string): Promise<{url: string, metadata: any}> => { return {url:"", metadata:{}}; } 
+export const extendReenactmentVideo = async (previousMetadata: any, prompt: string, aspectRatio: string): Promise<{url: string, metadata: any}> => { return {url:"", metadata:{}}; }

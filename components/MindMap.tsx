@@ -3,9 +3,9 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
 */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { MindMapData, MindMapNode } from '../types';
-import { User, FileText, MapPin, AlertTriangle, Briefcase, ZoomIn, ZoomOut, Maximize2, X, MessageSquare, Tag, Quote } from 'lucide-react';
+import { User, FileText, MapPin, AlertTriangle, Briefcase, ZoomIn, ZoomOut, Maximize2, X, MessageSquare, Tag, Quote, RefreshCw, Grab } from 'lucide-react';
 
 interface MindMapProps {
   data: MindMapData;
@@ -15,43 +15,139 @@ interface MindMapProps {
 
 const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
   const [nodes, setNodes] = useState<MindMapNode[]>([]);
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(0.8);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [selectedNode, setSelectedNode] = useState<MindMapNode | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
+  
+  // Interaction State
+  const [isDraggingCanvas, setIsDraggingCanvas] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [draggedNodeId, setDraggedNodeId] = useState<string | null>(null);
+
   const containerRef = useRef<HTMLDivElement>(null);
+  const animationRef = useRef<number>();
 
-  // Layout Algorithm: Radial
+  // --- PHYSICS ENGINE ---
   useEffect(() => {
-    if (!data || !data.nodes || !data.nodes.length) return;
+    if (!data || !data.nodes || !data.nodes.length) {
+        setNodes([]);
+        return;
+    }
 
-    const width = 800;
-    const height = 600;
+    // 1. Initialize Nodes with random positions near center
+    // We delay slightly to ensure container has dimensions, or default to reasonable fallback
+    const width = containerRef.current?.clientWidth || window.innerWidth * 0.4 || 800;
+    const height = containerRef.current?.clientHeight || window.innerHeight * 0.6 || 600;
     const centerX = width / 2;
     const centerY = height / 2;
 
-    // Clone nodes to avoid mutating props
-    const processedNodes = data.nodes.map(n => ({ ...n }));
-    const caseNode = processedNodes.find(n => n.type === 'case') || processedNodes[0];
-    
-    // Position center
-    caseNode.x = centerX;
-    caseNode.y = centerY;
-
-    const otherNodes = processedNodes.filter(n => n.id !== caseNode.id);
-    const radius = 220; // Increased radius for better spread
-    const angleStep = (2 * Math.PI) / otherNodes.length;
-
-    otherNodes.forEach((node, index) => {
-      // Create a slight spiral/offset for variety
-      const r = radius + (index % 2 === 0 ? 0 : 50);
-      node.x = centerX + r * Math.cos(index * angleStep);
-      node.y = centerY + r * Math.sin(index * angleStep);
+    const initialNodes = data.nodes.map((n, i) => {
+        // Spiral layout for initial spread to avoid stacking 
+        const angle = 0.5 * i;
+        const radius = 50 + 10 * i;
+        return {
+            ...n,
+            x: n.x || centerX + Math.cos(angle) * radius,
+            y: n.y || centerY + Math.sin(angle) * radius,
+            vx: 0,
+            vy: 0
+        };
     });
 
-    setNodes(processedNodes);
+    setNodes(initialNodes);
+
+    // 2. Simulation Loop
+    const simulate = () => {
+        setNodes(prevNodes => {
+            const newNodes = prevNodes.map(n => ({ ...n })); // Shallow copy for mutation in this frame
+            
+            // Tuned Physics Constants for "Breathing" Graph
+            const repulsion = 200000;   // Strong push to spread nodes
+            const k = 0.02;             // Weak spring to allow length
+            const centerGravity = 0.002; // Very weak pull to center
+            const damping = 0.80;       // Stability
+            const maxVelocity = 15;     // Speed limit
+            const idealLength = 100;    // Target edge length
+
+            // Apply Forces
+            newNodes.forEach((node, i) => {
+                let fx = 0;
+                let fy = 0;
+
+                // A. Repulsion (Nodes push each other away)
+                newNodes.forEach((other, j) => {
+                    if (i === j) return;
+                    const dx = node.x! - other.x!;
+                    const dy = node.y! - other.y!;
+                    let distSq = dx * dx + dy * dy;
+                    if (distSq < 100) distSq = 100; // Prevent singularity / infinity
+                    
+                    const dist = Math.sqrt(distSq);
+                    const force = repulsion / distSq;
+                    
+                    fx += (dx / dist) * force;
+                    fy += (dy / dist) * force;
+                });
+
+                // B. Spring Tension (Connected nodes pull together)
+                data.edges.forEach(edge => {
+                    let otherNode = null;
+                    if (edge.source === node.id) {
+                        otherNode = newNodes.find(n => n.id === edge.target);
+                    } else if (edge.target === node.id) {
+                        otherNode = newNodes.find(n => n.id === edge.source);
+                    }
+
+                    if (otherNode) {
+                        const dx = otherNode.x! - node.x!;
+                        const dy = otherNode.y! - node.y!;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        
+                        // Hooke's Law with ideal length
+                        // If dist > ideal, pull. If dist < ideal, push (optional, but simple spring usually just pulls)
+                        const displacement = dist - idealLength;
+                        const force = k * displacement; 
+                        
+                        if (dist > 0) {
+                            fx += (dx / dist) * force;
+                            fy += (dy / dist) * force;
+                        }
+                    }
+                });
+
+                // C. Center Gravity (Gentle drift to middle so it doesn't fly away)
+                fx += (centerX - node.x!) * centerGravity;
+                fy += (centerY - node.y!) * centerGravity;
+
+                // D. Update Velocity & Position
+                if (node.id !== draggedNodeId) { 
+                    node.vx = (node.vx! + fx) * damping;
+                    node.vy = (node.vy! + fy) * damping;
+
+                    // Clamp velocity
+                    if (node.vx! > maxVelocity) node.vx = maxVelocity;
+                    if (node.vx! < -maxVelocity) node.vx = -maxVelocity;
+                    if (node.vy! > maxVelocity) node.vy = maxVelocity;
+                    if (node.vy! < -maxVelocity) node.vy = -maxVelocity;
+
+                    node.x! += node.vx!;
+                    node.y! += node.vy!;
+                }
+            });
+
+            return newNodes;
+        });
+
+        animationRef.current = requestAnimationFrame(simulate);
+    };
+
+    animationRef.current = requestAnimationFrame(simulate);
+
+    return () => {
+        if (animationRef.current) cancelAnimationFrame(animationRef.current);
+    };
   }, [data]);
+
 
   const getNodeColor = (type: string) => {
     switch (type) {
@@ -75,60 +171,93 @@ const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
     }
   };
 
-  const handleMouseDown = (e: React.MouseEvent) => {
-    setIsDragging(true);
-    setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+  // --- INTERACTION HANDLERS ---
+
+  const handleCanvasMouseDown = (e: React.MouseEvent) => {
+      setIsDraggingCanvas(true);
+      setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (isDragging) {
-      setPan({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y });
-    }
+      if (isDraggingCanvas) {
+          setPan({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y });
+      }
+      if (draggedNodeId) {
+          // Update dragged node position directly in state to override physics
+          const rect = containerRef.current?.getBoundingClientRect();
+          if (rect) {
+             const mouseX = (e.clientX - rect.left - pan.x) / zoom;
+             const mouseY = (e.clientY - rect.top - pan.y) / zoom;
+             
+             setNodes(prev => prev.map(n => 
+                 n.id === draggedNodeId ? { ...n, x: mouseX, y: mouseY, vx: 0, vy: 0 } : n
+             ));
+          }
+      }
   };
 
   const handleMouseUp = () => {
-    setIsDragging(false);
+      setIsDraggingCanvas(false);
+      setDraggedNodeId(null);
   };
 
-  if (!data || !data.nodes || data.nodes.length === 0) {
+  const handleNodeMouseDown = (e: React.MouseEvent, nodeId: string) => {
+      e.stopPropagation(); // Prevent canvas drag
+      setDraggedNodeId(nodeId);
+      setSelectedNode(nodes.find(n => n.id === nodeId) || null);
+  };
+
+  const hasData = data && data.nodes && data.nodes.length > 0;
+  
+  if (!hasData) {
     return (
       <div className="flex flex-col items-center justify-center h-full bg-slate-50 text-slate-400">
         <Briefcase className="w-12 h-12 mb-3 opacity-20" />
-        <p className="text-xs uppercase tracking-widest mb-4">Empty Map Data</p>
+        <p className="text-xs uppercase tracking-widest mb-4">No Map Data Available</p>
         <button onClick={onClose} className="px-4 py-2 bg-slate-200 rounded text-xs font-bold text-slate-600">Close</button>
       </div>
     );
+  }
+
+  // Loading state
+  if (nodes.length === 0) {
+      return (
+         <div className="flex flex-col items-center justify-center h-full bg-slate-50 text-slate-400">
+            <RefreshCw className="w-8 h-8 mb-3 animate-spin text-indigo-400" />
+            <p className="text-xs uppercase tracking-widest">Constructing Neural Graph...</p>
+         </div>
+      );
   }
 
   return (
     <div className="fixed inset-0 z-[150] bg-white flex flex-col animate-in fade-in duration-300">
       
       {/* Header */}
-      <div className="h-16 border-b border-slate-200 flex items-center justify-between px-6 bg-white shadow-sm">
+      <div className="h-16 border-b border-slate-200 flex items-center justify-between px-6 bg-white shadow-sm z-30">
         <div className="flex items-center gap-3">
             <div className="p-2 bg-indigo-50 rounded border border-indigo-200">
                 <Maximize2 className="w-4 h-4 text-indigo-600" />
             </div>
             <div>
                 <h2 className="text-sm font-display font-bold text-slate-800 uppercase tracking-widest">Investigation Board</h2>
-                <p className="text-[10px] text-slate-500 font-mono">Entity Relationship Graph</p>
+                <p className="text-[10px] text-slate-500 font-mono">Dynamic Force Graph ({nodes.length} Entities)</p>
             </div>
         </div>
         <div className="flex items-center gap-2">
-            <button onClick={() => setZoom(z => Math.max(0.5, z - 0.1))} className="p-2 hover:bg-slate-100 rounded text-slate-500"><ZoomOut className="w-4 h-4"/></button>
+            <button onClick={() => setZoom(z => Math.max(0.3, z - 0.1))} className="p-2 hover:bg-slate-100 rounded text-slate-500"><ZoomOut className="w-4 h-4"/></button>
             <span className="text-xs font-mono text-slate-600 w-12 text-center">{Math.round(zoom * 100)}%</span>
-            <button onClick={() => setZoom(z => Math.min(2, z + 0.1))} className="p-2 hover:bg-slate-100 rounded text-slate-500"><ZoomIn className="w-4 h-4"/></button>
+            <button onClick={() => setZoom(z => Math.min(3, z + 0.1))} className="p-2 hover:bg-slate-100 rounded text-slate-500"><ZoomIn className="w-4 h-4"/></button>
             <div className="w-px h-6 bg-slate-200 mx-2"></div>
             <button onClick={onClose} className="p-2 hover:bg-red-50 hover:text-red-500 rounded text-slate-400"><X className="w-5 h-5"/></button>
         </div>
       </div>
 
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden relative">
         {/* Canvas */}
         <div 
             ref={containerRef}
-            className={`flex-1 relative overflow-hidden bg-slate-50 cursor-move`}
-            onMouseDown={handleMouseDown}
+            className={`flex-1 relative overflow-hidden bg-slate-50 ${isDraggingCanvas ? 'cursor-grabbing' : 'cursor-grab'}`}
+            onMouseDown={handleCanvasMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
@@ -136,10 +265,10 @@ const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
             <div className="absolute inset-0 bg-grid-slate-200/[0.5] bg-[length:40px_40px] pointer-events-none"></div>
             
             <div 
-                className="absolute inset-0 transition-transform duration-75 ease-out origin-center"
+                className="absolute inset-0 transition-transform duration-75 ease-linear origin-top-left"
                 style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
             >
-                <svg width="100%" height="100%" className="overflow-visible">
+                <svg width="2000" height="2000" className="overflow-visible pointer-events-none">
                     {/* Edges */}
                     {data.edges && data.edges.map((edge, i) => {
                         const source = nodes.find(n => n.id === edge.source);
@@ -147,30 +276,22 @@ const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
                         if (!source || !target || !source.x || !target.x) return null;
 
                         return (
-                            <g key={i}>
+                            <g key={i} className="transition-all duration-75">
                                 <line 
                                     x1={source.x} y1={source.y} 
                                     x2={target.x} y2={target.y} 
                                     stroke="#cbd5e1" 
-                                    strokeWidth="2" 
+                                    strokeWidth="1.5" 
                                     className="stroke-slate-300"
                                 />
-                                {/* Edge Label (Midpoint) */}
-                                <rect 
-                                    x={(source.x + target.x) / 2 - 20} 
-                                    y={(source.y + target.y) / 2 - 8} 
-                                    width="40" height="16" 
-                                    fill="white" 
-                                    rx="4"
-                                    stroke="#e2e8f0"
-                                />
+                                {/* Dynamic label placement */}
                                 <text 
                                     x={(source.x + target.x) / 2} 
-                                    y={(source.y + target.y) / 2 + 3} 
-                                    fill="#64748b" 
+                                    y={(source.y + target.y) / 2 - 5} 
+                                    fill="#94a3b8" 
                                     fontSize="8" 
                                     textAnchor="middle" 
-                                    className="font-mono uppercase tracking-wide"
+                                    className="font-mono uppercase tracking-wide bg-white"
                                 >
                                     {edge.relation}
                                 </text>
@@ -179,32 +300,39 @@ const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
                     })}
                 </svg>
 
-                {/* Nodes (HTML Overlay for interaction) */}
+                {/* Nodes (Interactive) */}
                 {nodes.map((node) => {
                    if (!node.x || !node.y) return null;
                    const Icon = getNodeIcon(node.type);
                    const isSelected = selectedNode?.id === node.id;
+                   const isDraggingThis = draggedNodeId === node.id;
 
                    return (
                        <div 
                             key={node.id}
-                            className={`absolute -translate-x-1/2 -translate-y-1/2 group cursor-pointer transition-all duration-300 ${isSelected ? 'z-50 scale-110' : 'z-10 hover:scale-105'}`}
-                            style={{ left: node.x, top: node.y }}
+                            className={`absolute -translate-x-1/2 -translate-y-1/2 group cursor-pointer`}
+                            style={{ 
+                                left: node.x, 
+                                top: node.y,
+                                zIndex: isSelected || isDraggingThis ? 50 : 10,
+                                transition: isDraggingThis ? 'none' : 'transform 0.1s linear' // Smooth physics unless dragging
+                            }}
+                            onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
                             onClick={(e) => { e.stopPropagation(); setSelectedNode(node); }}
                        >
                            {/* Glow Effect */}
-                           <div className={`absolute inset-0 rounded-full blur-md opacity-20 transition-all ${isSelected ? 'opacity-60 blur-lg scale-150' : 'group-hover:opacity-30'}`} style={{ backgroundColor: getNodeColor(node.type) }}></div>
+                           <div className={`absolute inset-0 rounded-full blur-md opacity-0 transition-all ${isSelected ? 'opacity-40 blur-lg scale-150' : 'group-hover:opacity-20'}`} style={{ backgroundColor: getNodeColor(node.type) }}></div>
                            
                            {/* Node Body */}
                            <div 
-                                className={`w-12 h-12 rounded-full border-2 flex items-center justify-center bg-white shadow-lg transition-colors`}
+                                className={`w-10 h-10 rounded-full border-2 flex items-center justify-center bg-white shadow-sm hover:shadow-md transition-all ${isSelected ? 'scale-125 border-4' : ''}`}
                                 style={{ borderColor: isSelected ? getNodeColor(node.type) : '#cbd5e1' }}
                            >
-                                <Icon className="w-5 h-5" style={{ color: getNodeColor(node.type) }} />
+                                <Icon className="w-4 h-4" style={{ color: getNodeColor(node.type) }} />
                            </div>
 
-                           {/* Label */}
-                           <div className={`absolute top-14 left-1/2 -translate-x-1/2 whitespace-nowrap px-3 py-1.5 rounded-full bg-white border border-slate-200 text-[10px] font-bold uppercase tracking-wider text-slate-600 shadow-sm transition-all ${isSelected ? 'border-indigo-400 text-indigo-600 ring-2 ring-indigo-50' : ''}`}>
+                           {/* Label - Only show if selected or hovered or zoom is high */}
+                           <div className={`absolute top-12 left-1/2 -translate-x-1/2 whitespace-nowrap px-2 py-1 rounded bg-white/90 border border-slate-200 text-[9px] font-bold uppercase tracking-wider text-slate-700 shadow-sm transition-opacity pointer-events-none ${isSelected || zoom > 1 ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                                {node.label}
                            </div>
                        </div>
@@ -213,9 +341,9 @@ const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
             </div>
         </div>
 
-        {/* Sidebar Panel (Deep Dive) */}
+        {/* Sidebar Panel (Deep Dive) - Floating right */}
         {selectedNode && (
-            <div className="w-80 bg-white border-l border-slate-200 flex flex-col animate-in slide-in-right duration-300 shadow-xl z-20">
+            <div className="absolute top-16 right-0 bottom-0 w-80 bg-white border-l border-slate-200 flex flex-col animate-in slide-in-right duration-300 shadow-2xl z-40">
                 <div className="p-6 border-b border-slate-100 flex items-start justify-between bg-slate-50">
                     <div>
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{selectedNode.type}</span>
