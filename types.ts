@@ -54,7 +54,7 @@ export interface InterrogationResult {
 }
 
 export interface StreamComponent {
-  type: 'analysis_result' | 'visual_generated' | 'doc_generated' | 'suggestion_chips';
+  type: 'analysis_result' | 'visual_generated' | 'doc_generated' | 'suggestion_chips' | 'auto_protocol_start';
   data: any;
 }
 
@@ -93,13 +93,21 @@ export interface GeneratedDocument {
 }
 
 // Mind Map Types
-export type NodeType = 'case' | 'person' | 'evidence' | 'location' | 'event';
+export type NodeType = 'case' | 'person' | 'evidence' | 'location' | 'event' | 'statute';
+
+export interface NodeMetadata {
+    role?: string; // e.g. "Plaintiff", "Hostile Witness"
+    impactScore?: number; // 1-10 relevance
+    tags?: string[];
+    keyQuote?: string;
+}
 
 export interface MindMapNode {
   id: string;
   label: string;
   type: NodeType;
   description: string;
+  metadata?: NodeMetadata; // Enhanced Data
   color?: string;
   x?: number;
   y?: number;
@@ -128,4 +136,16 @@ export interface CaseFile {
   visuals: GeneratedContent[];
   documents: GeneratedDocument[];
   mindMap: MindMapData | null;
+}
+
+export interface VisualFilter {
+    subject?: string;
+    evidenceType?: EvidenceType;
+    timePeriod?: string;
+}
+
+export interface CaseContextDetection {
+    caseType: string;
+    recommendedProtocols: AnalysisDepth[];
+    reasoning: string;
 }

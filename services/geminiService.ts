@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 import { GoogleGenAI, Modality, Type, Chat, HarmCategory, HarmBlockThreshold } from "@google/genai";
-import { Tone, EvidenceType, InterrogationResult, SearchResultItem, Language, AspectRatio, ImageResolution, AnalysisDepth, VideoResolution, CaseSummary, DocumentType, MindMapData } from "../types";
+import { Tone, EvidenceType, InterrogationResult, SearchResultItem, Language, AspectRatio, ImageResolution, AnalysisDepth, VideoResolution, CaseSummary, DocumentType, MindMapData, CaseContextDetection } from "../types";
 
 // Create a fresh client for every request to ensure the latest API key from process.env.API_KEY is used
 const getAi = () => {
@@ -102,6 +102,7 @@ const fileToPart = (base64Data: string, mimeType: string) => {
 // Helper to clean JSON string from Markdown code blocks
 const cleanJsonString = (str: string) => {
   if (!str) return "{}";
+  // Remove markdown code blocks and any trailing/leading whitespace
   return str.replace(/```json\n?|\n?```/g, "").trim();
 };
 
@@ -137,6 +138,50 @@ export const createCaseChat = (base64Data: string, mimeType: string): Chat => {
       }
     ]
   });
+};
+
+/**
+ * AUTO-DISCOVERY: Determines the type of case and what protocols to run automatically.
+ */
+export const detectCaseContext = async (base64Data: string, mimeType: string): Promise<CaseContextDetection> => {
+    const prompt = `
+    ${SENIOR_ASSOCIATE_PROMPT}
+
+    TASK:
+    Identify the TYPE of legal case this document represents (e.g., "Medical Malpractice", "Auto Accident - Rear End", "Breach of Contract", "Criminal - DUI").
+    Then, determine the 3 most critical Analysis Protocols to run immediately to gather actionable intelligence.
+
+    Select protocols ONLY from this list:
+    ['Medical Chronology', 'Liability & Negligence', 'Witness Credibility', 'Settlement Valuation', "Liar's List", 'Witness Bias Detection', 'Bias & Fact Separation']
+
+    OUTPUT JSON:
+    {
+        "caseType": "String",
+        "recommendedProtocols": ["Protocol 1", "Protocol 2"],
+        "reasoning": "Short explanation of why these protocols fit."
+    }
+    `;
+
+    const response = await getAi().models.generateContent({
+        model: ANALYSIS_MODEL,
+        contents: { parts: [fileToPart(base64Data, mimeType), { text: prompt }] },
+        config: { responseMimeType: "application/json" }
+    });
+
+    try {
+        const result = JSON.parse(cleanJsonString(response.text || "{}"));
+        return {
+            caseType: result.caseType || "General Litigation",
+            recommendedProtocols: result.recommendedProtocols || ['Initial Case Assessment'],
+            reasoning: result.reasoning || "Standard analysis."
+        };
+    } catch (e) {
+        return {
+            caseType: "Unknown Case Type",
+            recommendedProtocols: ['Initial Case Assessment'],
+            reasoning: "Classification failed."
+        };
+    }
 };
 
 export const analyzeCaseFile = async (base64Data: string, mimeType: string, depth: AnalysisDepth): Promise<{ findings: string[], summary: CaseSummary, precedents: SearchResultItem[], graphData?: MindMapData }> => {
@@ -188,12 +233,15 @@ export const analyzeCaseFile = async (base64Data: string, mimeType: string, dept
     OUTPUT:
     Return a JSON Object with three top-level keys:
     1. "findings": An Array of 6-8 strings. Each string must be a distinct, critical insight or finding formatted like "HEADER: Key fact or insight... [Citation]".
-    2. "summary": An Object containing the case metadata: "parties" (e.g. Plaintiff v Defendant), "incidentType" (e.g. Auto Accident), "date", "jurisdiction", "synopsis" (A concise executive summary of the case status and key pivot points, approx 2-3 sentences), and "tags" (An array of 3-5 relevant short keywords or legal categories for indexing, e.g. 'Negligence', 'DUI', 'High Value').
+    2. "summary": An Object containing the case metadata: "parties", "incidentType", "date", "jurisdiction", "synopsis" (A concise executive summary under 80 words), and "tags".
     3. "graphData": A subset of Mind Map data relevant to THIS specific analysis. Return nodes and edges representing the people, evidence, or events discussed in this analysis. 
-       - nodes: [{ "id": "uuid", "label": "Short Name", "type": "person|evidence|location|event", "description": "Short bio/detail" }]
-       - edges: [{ "source": "id1", "target": "id2", "relation": "verb" }]
 
-    Ensure the response is valid JSON.
+    CRITICAL CONSTRAINTS TO PREVENT JSON ERRORS:
+    - Keep 'synopsis' STRICTLY under 80 words.
+    - Limit 'findings' to 8 items maximum.
+    - Ensure 'description' fields in graphData are short (under 10 words).
+    - Do NOT output Markdown code blocks (e.g. \`\`\`json), just the raw JSON string if possible, or ensure the block is closed.
+    - Ensure the JSON is completely valid and strictly closed.
   `;
 
   const config = {
@@ -281,7 +329,9 @@ export const analyzeCaseFile = async (base64Data: string, mimeType: string, dept
   let graphData: MindMapData | undefined;
 
   try {
-    result = JSON.parse(cleanJsonString(response.text || "{}"));
+    const cleanText = cleanJsonString(response.text || "{}");
+    result = JSON.parse(cleanText);
+    
     findings = Array.isArray(result.findings) ? result.findings.map(String).filter((f: string) => f.length > 5) : [];
     
     // Robustly construct summary to prevent undefined errors in UI
@@ -304,7 +354,7 @@ export const analyzeCaseFile = async (base64Data: string, mimeType: string, dept
   } catch (e) {
     console.error("Failed to parse analysis JSON", e);
     return {
-        findings: ["Error parsing analysis results. The model response may have been truncated."],
+        findings: ["Error parsing analysis results. The model response may have been truncated. Please try a more specific query."],
         summary: { parties: "N/A", incidentType: "N/A", date: "N/A", jurisdiction: "N/A", synopsis: "Error extracting summary.", tags: [] },
         precedents: []
     };
@@ -354,24 +404,30 @@ export const generateMindMapData = async (base64Data: string, mimeType: string):
     ${SENIOR_ASSOCIATE_PROMPT}
     
     TASK:
-    Analyze the case file and extract specific Entities (People, Key Evidence, Locations, Events) and their relationships to create an Investigative Mind Map (Node-Link Graph).
+    Generate a DEEP FORENSIC INVESTIGATION GRAPH (Node-Link Structure).
+    Do not just list entities. You must create a "Hub and Spoke" or "Causal Chain" structure connecting them.
     
-    Requirements:
-    1. Identify the 'Case' as the central root node.
-    2. Identify 4-8 key nodes directly related to the case (e.g. The Plaintiff, The Defendant, The Crash Site).
-    3. Identify secondary nodes connected to those key nodes.
-    4. Define the relationships (edges) between them.
-    5. CRITICAL: Keep all 'label' and 'description' fields CONCISE (under 20 words) to prevent data truncation.
+    1. **Core Node:** The Case Type (e.g. "Negligence Claim").
+    2. **Key Entities:** People, Organizations, Evidence Items.
+    3. **Relationships:** "Contradicts", "Employs", "Caused", "Found At", "Violated".
+    4. **Rich Metadata:**
+       - "role": e.g. "Plaintiff", "Hostile Witness", "Damning Evidence".
+       - "impactScore": 1-10 (10 = Critical to winning/losing).
+       - "tags": ["Reliable", "Hearsay", "Expert", "Fact"].
     
-    OUTPUT:
-    Return a JSON object:
+    OUTPUT JSON:
     {
-      "nodes": [{ "id": "1", "label": "Short Label", "type": "case|person|evidence|location|event", "description": "Short details..." }],
-      "edges": [{ "source": "1", "target": "2", "relation": "relationship label" }]
+      "nodes": [{ 
+         "id": "unique_id", 
+         "label": "Short Name", 
+         "type": "case|person|evidence|location|event|statute", 
+         "description": "2-3 sentence summary of why this node matters.",
+         "metadata": { "role": "String", "impactScore": Number, "tags": ["String"], "keyQuote": "String" } 
+      }],
+      "edges": [{ "source": "id", "target": "id", "relation": "relationship label" }]
     }
   `;
 
-  // Switching to REASONING_MODEL (gemini-3-pro-preview) for better graph generation and robust handling of large context
   const response = await getAi().models.generateContent({
     model: REASONING_MODEL,
     contents: {
@@ -395,6 +451,15 @@ export const generateMindMapData = async (base64Data: string, mimeType: string):
                 label: { type: Type.STRING },
                 type: { type: Type.STRING },
                 description: { type: Type.STRING },
+                metadata: {
+                    type: Type.OBJECT,
+                    properties: {
+                        role: { type: Type.STRING },
+                        impactScore: { type: Type.NUMBER },
+                        tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+                        keyQuote: { type: Type.STRING }
+                    }
+                }
               }
             } 
           },
@@ -623,7 +688,7 @@ export const editEvidenceVisual = async (currentImageBase64: string, editInstruc
   throw new Error("Failed to edit evidence.");
 };
 
-export const generateLegalDocument = async (summary: CaseSummary, findings: string[], docType: DocumentType): Promise<string> => {
+export const generateLegalDocument = async (summary: CaseSummary, findings: string[], docType: DocumentType, userInstructions?: string): Promise<string> => {
   const contextString = `
     CASE METADATA:
     Parties: ${summary.parties}
@@ -642,6 +707,9 @@ export const generateLegalDocument = async (summary: CaseSummary, findings: stri
 
     CONTEXT:
     ${contextString}
+
+    USER INSTRUCTIONS:
+    ${userInstructions || "No specific instructions provided. Follow standard legal templates."}
 
     REQUIREMENTS:
     - Format: Professional Markdown.

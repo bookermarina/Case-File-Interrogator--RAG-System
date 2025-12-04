@@ -14,7 +14,8 @@ import {
   analyzeCaseFile,
   createCaseChat,
   generateLegalDocument,
-  generateMindMapData
+  generateMindMapData,
+  detectCaseContext
 } from './services/geminiService';
 import { Chat, GenerateContentResponse } from "@google/genai";
 import AssetSidebar from './components/AssetSidebar';
@@ -27,7 +28,8 @@ const SUGGESTED_COMMANDS = [
     { label: 'Medical Timeline', cmd: '/analyze medical', desc: 'Chronological Injury Report' },
     { label: 'Settlement Value', cmd: '/analyze value', desc: 'Calculate Damages Range' },
     { label: "Liar's List", cmd: '/analyze liars', desc: 'Witness Contradictions' },
-    { label: 'Generate Visual', cmd: '/visualize', desc: 'Create Evidence Image' },
+    { label: 'Visual Evidence', cmd: '/visualize', desc: 'Create Evidence Image' },
+    { label: 'Strategy Visual', cmd: '/visualize strategy', desc: 'Strengths & Weaknesses Infographic' },
     { label: 'Draft Memo', cmd: '/draft memo', desc: 'Internal Case Memo' },
 ];
 
@@ -139,75 +141,83 @@ const App: React.FC = () => {
       });
   };
 
+  /**
+   * AUTONOMOUS DASHBOARD INITIALIZATION
+   * 1. Establish Chat
+   * 2. Detect Case Context (Auto-Discovery)
+   * 3. Run Recommended Protocols (Auto-Analysis)
+   */
   const initializeDashboard = async () => {
       if (!fileBase64 || isReadingFile) return;
-
       setWorkflowStep('dashboard');
-      
-      // Auto-start chat with analysis
+
+      // 1. Establish Chat
       if (!chatSessionRef.current) {
-          try {
-            chatSessionRef.current = createCaseChat(fileBase64, mimeType);
-          } catch (e) {
-            console.error("Failed to create chat session:", e);
-             setChatMessages([{
-                id: 'sys-err-init',
-                role: 'model',
-                text: "CRITICAL ERROR: Failed to initialize Intelligence Engine. Please refresh and try again.",
-                timestamp: Date.now()
-            }]);
-            return;
-          }
+          chatSessionRef.current = createCaseChat(fileBase64, mimeType);
       }
-      
-      // Add initial system message
+
       setChatMessages([{
           id: 'sys-init',
           role: 'model',
-          text: "Secure Uplink Established. Case file ingested. I am initiating the preliminary assessment scan now...",
+          text: "Secure Uplink Established. Initiating Deep Forensic Ingestion...",
           timestamp: Date.now()
       }]);
       setIsChatTyping(true);
 
-      // Trigger Analysis in background
       try {
-          const result = await analyzeCaseFile(fileBase64, mimeType, 'Initial Case Assessment');
+          // 2. Detect Context & Recommned Protocols
+          const context = await detectCaseContext(fileBase64, mimeType);
           
-          if (result) {
-            setCaseSummary(result.summary);
-            // Save findings as the first Asset
-            const initialFindingAsset: FindingAsset = {
-                id: 'initial-scan',
-                title: 'Initial Case Assessment',
-                type: 'Initial Case Assessment',
-                items: result.findings,
-                timestamp: Date.now()
-            };
-            setKeyFindings([initialFindingAsset]);
-            setCasePrecedents(result.precedents);
-            if (result.graphData) mergeGraphData(result.graphData);
-            
-            setIsChatTyping(false);
-            setChatMessages(prev => [...prev, {
-                id: 'sys-result',
-                role: 'model',
-                text: `Analysis Complete. I have identified ${result.findings.length} key findings and extracted the case abstract. \n\nHow should we proceed?`,
-                timestamp: Date.now(),
-                suggestions: ['Check Witness Credibility', 'Generate Timeline', 'Draft Case Memo', 'Analyze Liability'],
-                component: { type: 'analysis_result', data: result.summary }
-            }]);
-          } else {
-             throw new Error("Empty analysis result");
+          setChatMessages(prev => [...prev, {
+              id: 'sys-context',
+              role: 'model',
+              text: `CASE DETECTED: ${context.caseType}\n\n${context.reasoning}\n\nI am automatically initiating the following protocols to build your Intelligence Graph:\n${context.recommendedProtocols.map(p => `• ${p}`).join('\n')}`,
+              timestamp: Date.now(),
+              component: { type: 'auto_protocol_start', data: context }
+          }]);
+
+          // 3. Auto-Run Recommended Protocols
+          // First, always run 'Initial Case Assessment' to get the summary
+          const protocolsToRun = Array.from(new Set(['Initial Case Assessment', ...context.recommendedProtocols])).slice(0, 3); // Limit to top 3 for speed
+
+          for (const protocol of protocolsToRun) {
+              const result = await analyzeCaseFile(fileBase64, mimeType, protocol as AnalysisDepth);
+              
+              if (result) {
+                  // Only set global summary on the initial run
+                  if (protocol === 'Initial Case Assessment') {
+                      setCaseSummary(result.summary);
+                      setCasePrecedents(result.precedents);
+                  }
+
+                  // Add Asset
+                  const newFindingAsset: FindingAsset = {
+                      id: `auto-${Date.now()}-${protocol}`,
+                      title: protocol,
+                      type: protocol as AnalysisDepth,
+                      items: result.findings,
+                      timestamp: Date.now()
+                  };
+                  setKeyFindings(prev => [newFindingAsset, ...prev]);
+
+                  // Merge Graph
+                  if (result.graphData) mergeGraphData(result.graphData);
+              }
           }
-      } catch (e) {
-          console.error("Analysis failed", e);
+
           setIsChatTyping(false);
           setChatMessages(prev => [...prev, {
-              id: 'sys-err',
+              id: 'sys-ready',
               role: 'model',
-              text: "Error during initial scan. The file content may be unreadable or protected. Please try uploading a different file or asking specific questions.",
-              timestamp: Date.now()
+              text: "Forensic Ingestion Complete. The Asset Vault and Knowledge Graph have been populated.\n\nAwaiting your specific orders.",
+              timestamp: Date.now(),
+              suggestions: ['Visualize Evidence', 'Generate Timeline', 'Draft Memo']
           }]);
+
+      } catch (e) {
+          console.error("Initialization failed", e);
+          setIsChatTyping(false);
+          setChatMessages(prev => [...prev, { id: 'err', role: 'model', text: "Ingestion Error. System falling back to manual mode.", timestamp: Date.now() }]);
       }
   };
 
@@ -218,6 +228,9 @@ const App: React.FC = () => {
       let depth: AnalysisDepth | null = null;
       let action: 'analyze' | 'visualize' | 'draft' | 'chat' = 'chat';
       let docType: DocumentType = 'Internal Case Memo';
+      
+      // Use local variable to override state for immediate execution
+      let targetStyle: EvidenceType = evidenceStyle;
 
       // 1. Detect Intent & Map to Protocol
       
@@ -226,8 +239,29 @@ const App: React.FC = () => {
       else if (lowerCmd.includes('/analyze medical')) { depth = 'Medical Chronology'; action = 'analyze'; }
       else if (lowerCmd.includes('/analyze value')) { depth = 'Settlement Valuation'; action = 'analyze'; }
       else if (lowerCmd.includes('/analyze liars')) { depth = "Liar's List"; action = 'analyze'; }
-      else if (lowerCmd.includes('/visualize')) { action = 'visualize'; userQuery = cmd.replace(/\/visualize/i, '').trim(); }
-      else if (lowerCmd.includes('/draft')) { action = 'draft'; }
+      else if (lowerCmd.includes('/visualize strategy')) { 
+          action = 'visualize'; 
+          userQuery = "Generate a strategic infographic visualization of the case's key strengths and weaknesses based on the findings.";
+          targetStyle = 'Strengths & Weaknesses Visualization';
+          setEvidenceStyle(targetStyle); // Sync state for UI
+      }
+      else if (lowerCmd.includes('/visualize')) { 
+          action = 'visualize'; 
+          userQuery = cmd.replace(/\/visualize/i, '').trim(); 
+      }
+      else if (lowerCmd.startsWith('/draft')) { 
+          action = 'draft';
+          if (lowerCmd.includes('memo')) docType = 'Internal Case Memo';
+          else if (lowerCmd.includes('letter')) docType = 'Demand Letter';
+          else if (lowerCmd.includes('motion')) docType = 'Motion in Limine (Draft)';
+          else if (lowerCmd.includes('deposition') || lowerCmd.includes('questions')) docType = 'Deposition Questions Outline';
+          else if (lowerCmd.includes('status') || lowerCmd.includes('client')) docType = 'Client Status Update';
+          
+          // Remove keywords to capture user custom instructions
+          userQuery = cmd.replace(/^\/draft/i, '')
+                         .replace(/memo|letter|motion|deposition|questions|status|client/gi, '')
+                         .trim();
+      }
       
       // Natural Language Protocol Mapping (e.g. from Suggestions)
       else if (lowerCmd.includes('witness credibility') || lowerCmd.includes('check witness')) { depth = 'Witness Credibility'; action = 'analyze'; }
@@ -238,10 +272,16 @@ const App: React.FC = () => {
       else if (lowerCmd.includes('liar') && lowerCmd.includes('list')) { depth = "Liar's List"; action = 'analyze'; }
       else if (lowerCmd.includes('bias') && lowerCmd.includes('audit')) { depth = 'Bias & Fact Separation'; action = 'analyze'; }
       else if ((lowerCmd.includes('generate') || lowerCmd.includes('create')) && lowerCmd.includes('timeline')) { 
-          // Timelines are typically handled as a specific visual style in this app
           action = 'visualize'; 
           userQuery = "Generate a chronological timeline of key events";
-          setEvidenceStyle('Timeline Visualization');
+          targetStyle = 'Timeline Visualization';
+          setEvidenceStyle(targetStyle);
+      }
+      else if (lowerCmd.includes('strengths') && (lowerCmd.includes('weaknesses') || lowerCmd.includes('swot') || lowerCmd.includes('strategy'))) {
+          action = 'visualize';
+          userQuery = "Generate a strategic infographic visualization of the case's key strengths and weaknesses";
+          targetStyle = 'Strengths & Weaknesses Visualization';
+          setEvidenceStyle(targetStyle);
       }
       else if (lowerCmd.includes('draft') && lowerCmd.includes('memo')) { action = 'draft'; docType = 'Internal Case Memo'; }
       else if (lowerCmd.includes('draft') && lowerCmd.includes('letter')) { action = 'draft'; docType = 'Demand Letter'; }
@@ -289,7 +329,8 @@ const App: React.FC = () => {
           } 
           else if (action === 'visualize') {
               const prompt = userQuery || "Visualize key evidence";
-              const result = await interrogateCaseFile(prompt, fileBase64, mimeType, tone, evidenceStyle, 'English');
+              // Pass targetStyle explicitly to ensure we use the overridden value
+              const result = await interrogateCaseFile(prompt, fileBase64, mimeType, tone, targetStyle, 'English');
               const visualData = await generateEvidenceVisual(result.visualPrompt, aspectRatio, '1K');
               
               // CREATE VISUAL ASSET (Automatically Add to Sidebar)
@@ -300,7 +341,7 @@ const App: React.FC = () => {
                   prompt: prompt,
                   answer: result.answer,
                   timestamp: Date.now(),
-                  style: evidenceStyle
+                  style: targetStyle // Use the correct style
               };
               setGeneratedVisuals(prev => [newContent, ...prev]);
 
@@ -327,7 +368,7 @@ const App: React.FC = () => {
 
               // Gather all findings so far to inform the draft
               const allFindings = keyFindings.flatMap(f => f.items);
-              const docContent = await generateLegalDocument(caseSummary, allFindings, docType);
+              const docContent = await generateLegalDocument(caseSummary, allFindings, docType, userQuery);
               
               // CREATE DOCUMENT ASSET (Automatically Add to Sidebar)
               const newDoc: GeneratedDocument = {
@@ -414,9 +455,27 @@ const App: React.FC = () => {
   // --- RENDERERS ---
 
   const renderStreamComponent = (comp: StreamComponent) => {
+      if (comp.type === 'auto_protocol_start') {
+          return (
+             <div className="mt-2 p-3 bg-indigo-50 border border-indigo-200 rounded-lg animate-in zoom-in">
+                 <div className="flex items-center gap-2 mb-2">
+                     <Zap className="w-4 h-4 text-indigo-600" />
+                     <span className="text-[10px] font-bold uppercase tracking-widest text-indigo-600">Auto-Discovery Protocol</span>
+                 </div>
+                 <div className="text-xs text-slate-700">
+                    <p className="font-bold mb-1">Detected Context: {comp.data.caseType}</p>
+                    <ul className="list-disc pl-4 space-y-1 mt-1">
+                        {comp.data.recommendedProtocols.map((p:string, i:number) => (
+                            <li key={i}>{p}</li>
+                        ))}
+                    </ul>
+                 </div>
+             </div>
+          );
+      }
       if (comp.type === 'analysis_result') {
           return (
-              <div className="mt-2 p-3 bg-indigo-50 border border-indigo-100 rounded-lg animate-in zoom-in">
+              <div className="mt-2 p-3 bg-white border border-slate-200 rounded-lg animate-in zoom-in shadow-sm">
                   <div className="flex items-center gap-2 mb-2">
                       <Shield className="w-4 h-4 text-indigo-600" />
                       <span className="text-[10px] font-bold uppercase tracking-widest text-indigo-600">Analysis Output</span>

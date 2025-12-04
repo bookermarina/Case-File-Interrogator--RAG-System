@@ -5,7 +5,7 @@
 */
 import React, { useState, useEffect, useRef } from 'react';
 import { MindMapData, MindMapNode } from '../types';
-import { User, FileText, MapPin, AlertTriangle, Briefcase, ZoomIn, ZoomOut, Maximize2, X, MessageSquare } from 'lucide-react';
+import { User, FileText, MapPin, AlertTriangle, Briefcase, ZoomIn, ZoomOut, Maximize2, X, MessageSquare, Tag, Quote } from 'lucide-react';
 
 interface MindMapProps {
   data: MindMapData;
@@ -40,7 +40,7 @@ const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
     caseNode.y = centerY;
 
     const otherNodes = processedNodes.filter(n => n.id !== caseNode.id);
-    const radius = 200;
+    const radius = 220; // Increased radius for better spread
     const angleStep = (2 * Math.PI) / otherNodes.length;
 
     otherNodes.forEach((node, index) => {
@@ -152,6 +152,7 @@ const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
                                     width="40" height="16" 
                                     fill="white" 
                                     rx="4"
+                                    stroke="#e2e8f0"
                                 />
                                 <text 
                                     x={(source.x + target.x) / 2} 
@@ -204,22 +205,64 @@ const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
 
         {/* Sidebar Panel (Deep Dive) */}
         {selectedNode && (
-            <div className="w-80 bg-white border-l border-slate-200 p-6 flex flex-col animate-in slide-in-right duration-300 shadow-xl">
-                <div className="flex items-start justify-between mb-6">
+            <div className="w-80 bg-white border-l border-slate-200 flex flex-col animate-in slide-in-right duration-300 shadow-xl z-20">
+                <div className="p-6 border-b border-slate-100 flex items-start justify-between bg-slate-50">
                     <div>
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{selectedNode.type}</span>
                         <h3 className="text-xl font-display font-bold text-slate-800 mt-1">{selectedNode.label}</h3>
+                        {selectedNode.metadata?.role && (
+                             <span className="inline-block mt-2 px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 text-[10px] font-bold uppercase">{selectedNode.metadata.role}</span>
+                        )}
                     </div>
                     <button onClick={() => setSelectedNode(null)} className="text-slate-400 hover:text-slate-700"><X className="w-4 h-4"/></button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto mb-6">
-                    <p className="text-sm text-slate-600 leading-relaxed font-mono border-l-2 border-slate-200 pl-4 bg-slate-50 p-3 rounded-r">
-                        {selectedNode.description}
-                    </p>
+                <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                    {/* Description */}
+                    <div>
+                        <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Dossier</h4>
+                        <p className="text-sm text-slate-600 leading-relaxed font-serif">
+                            {selectedNode.description}
+                        </p>
+                    </div>
+
+                    {/* Impact Score */}
+                    {selectedNode.metadata?.impactScore && (
+                        <div>
+                             <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 flex justify-between">
+                                 <span>Case Relevance</span>
+                                 <span className="text-indigo-600">{selectedNode.metadata.impactScore}/10</span>
+                             </h4>
+                             <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
+                                 <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${selectedNode.metadata.impactScore * 10}%` }}></div>
+                             </div>
+                        </div>
+                    )}
+
+                    {/* Key Quote */}
+                    {selectedNode.metadata?.keyQuote && (
+                        <div className="bg-slate-50 p-3 rounded border-l-2 border-indigo-300">
+                             <Quote className="w-3 h-3 text-indigo-300 mb-1" />
+                             <p className="text-xs text-slate-700 italic">"{selectedNode.metadata.keyQuote}"</p>
+                        </div>
+                    )}
+
+                    {/* Tags */}
+                    {selectedNode.metadata?.tags && (
+                        <div>
+                            <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Tags</h4>
+                            <div className="flex flex-wrap gap-2">
+                                {selectedNode.metadata.tags.map((tag, i) => (
+                                    <span key={i} className="px-2 py-1 bg-white border border-slate-200 rounded text-[10px] text-slate-600 flex items-center gap-1">
+                                        <Tag className="w-2 h-2" /> {tag}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
 
-                <div className="mt-auto pt-6 border-t border-slate-100">
+                <div className="p-6 border-t border-slate-100 bg-slate-50">
                     <button 
                         onClick={() => onNodeClick(selectedNode)}
                         className="w-full btn-primary py-3 rounded-lg text-xs font-bold uppercase tracking-widest flex items-center justify-center gap-2"
