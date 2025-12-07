@@ -9,13 +9,14 @@ import {
   analyzeCaseFile, createCaseChat, detectCaseContext, 
   generateEvidenceVisual, generateLegalDocument, generateMindMapData, interrogateCaseFile 
 } from './services/geminiService';
-import { Chat, GenerateContentResponse } from "@google/genai";
+import { Chat } from "@google/genai";
 import SourcePanel from './components/SourcePanel';
 import CaseStudio from './components/CaseStudio';
 import IntroScreen from './components/IntroScreen';
 import Infographic from './components/Infographic'; // Reusing for preview
 import MindMap from './components/MindMap'; // Reusing for preview
-import { Shield, Bot, User, Send, ChevronRight, X, Loader2, Download, Clipboard, Sparkles, Layout, PanelRightClose, PanelRightOpen, Menu } from 'lucide-react';
+import { DashboardLayout } from './components/DashboardLayout';
+import { Bot, User, Send, X, Clipboard, Download, Sparkles } from 'lucide-react';
 
 const App: React.FC = () => {
   const [showIntro, setShowIntro] = useState(true);
@@ -372,75 +373,53 @@ const App: React.FC = () => {
   if (showIntro) return <IntroScreen onComplete={() => setShowIntro(false)} />;
 
   return (
-    <div className="flex h-screen bg-slate-50 text-slate-900 font-sans overflow-hidden">
-        {!checkingKey && !hasApiKey && (
-             <div className="fixed inset-0 z-[200] bg-black/90 flex items-center justify-center"><button onClick={async () => { await window.aistudio.openSelectKey(); setHasApiKey(true); }} className="btn-primary px-8 py-4 rounded uppercase">Authenticate</button></div>
-        )}
-
-        {/* COLUMN 1: EVIDENCE LOCKER (Collapsible) */}
-        <div className={`
-            flex-shrink-0 bg-slate-50 border-r border-slate-200 z-20 transition-all duration-300 absolute md:static h-full shadow-lg md:shadow-none
-            ${isLeftPanelOpen ? 'w-64 translate-x-0' : 'w-0 -translate-x-full md:w-0 md:translate-x-0 overflow-hidden opacity-0 md:opacity-100'}
-        `}>
-            <div className="w-64 h-full"> {/* Inner wrapper to maintain width during transitions */}
-                <SourcePanel 
-                    sources={sources} 
-                    onUpload={handleFileUpload} 
-                    onRemove={removeSource} 
-                    onToggleSelect={toggleSourceSelection} 
-                    isReading={isReadingFile} 
-                />
-            </div>
-        </div>
-
-        {/* COLUMN 2: INTELLIGENCE STREAM (Main) */}
-        <div className="flex-1 flex flex-col bg-white border-r border-slate-200 relative min-w-0">
-             <header className="h-16 border-b border-slate-100 flex items-center px-4 md:px-6 justify-between flex-shrink-0">
-                <div className="flex items-center gap-3">
-                    <button onClick={() => setIsLeftPanelOpen(!isLeftPanelOpen)} className="md:hidden p-2 hover:bg-slate-100 rounded text-slate-500">
-                        <Menu className="w-5 h-5" />
-                    </button>
-                    <Shield className="w-4 h-4 text-indigo-600 hidden sm:block" />
-                    <span className="font-bold text-sm tracking-widest uppercase truncate">Interrogation Stream</span>
-                </div>
-                <div className="flex items-center gap-3">
-                     <div className="flex items-center gap-2">
-                        <span className={`w-2 h-2 rounded-full ${chatSessionRef.current ? 'bg-green-500' : 'bg-slate-300'}`}></span>
-                        <span className="text-[10px] font-mono text-slate-500 uppercase hidden sm:inline">{chatSessionRef.current ? 'Online' : 'Offline'}</span>
-                     </div>
-                     <div className="h-4 w-px bg-slate-200 mx-2 hidden sm:block"></div>
-                     <button 
-                        onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
-                        className={`p-2 rounded-md transition-colors ${isRightPanelOpen ? 'bg-indigo-50 text-indigo-600' : 'text-slate-400 hover:bg-slate-50'}`}
-                        title="Toggle Case Studio"
-                     >
-                        {isRightPanelOpen ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
-                     </button>
-                </div>
-             </header>
-             
-             <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 scrollbar-hide">
+    <>
+      <DashboardLayout
+        chatStatus={!!chatSessionRef.current}
+        isLeftOpen={isLeftPanelOpen}
+        isRightOpen={isRightPanelOpen}
+        onToggleLeft={() => setIsLeftPanelOpen(!isLeftPanelOpen)}
+        onToggleRight={() => setIsRightPanelOpen(!isRightPanelOpen)}
+        leftPanel={
+          <SourcePanel 
+              sources={sources} 
+              onUpload={handleFileUpload} 
+              onRemove={removeSource} 
+              onToggleSelect={toggleSourceSelection} 
+              isReading={isReadingFile} 
+          />
+        }
+        rightPanel={
+          <CaseStudio 
+              artifacts={artifacts} 
+              recommendedProtocols={contextData.recommendedProtocols}
+              onRunProtocol={runProtocol}
+              onOpenArtifact={setActiveArtifact}
+          />
+        }
+      >
+         {/* CENTER CONTENT (CHAT STREAM) */}
+         <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 scrollbar-hide h-full flex flex-col">
                  {sources.length === 0 ? (
-                     <div className="flex flex-col items-center justify-center h-full text-slate-400 text-center px-4">
+                     <div className="flex flex-col items-center justify-center flex-1 text-slate-400 text-center px-4">
                          <Bot className="w-12 h-12 mb-4 opacity-20" />
                          <p className="text-sm font-medium">Waiting for evidence...</p>
                          <p className="text-xs">Upload files to the Evidence Locker to begin.</p>
                      </div>
                  ) : (
-                    <>
+                    <div className="flex-1 overflow-y-auto">
                         {chatMessages.map(msg => (
-                            <div key={msg.id} className={`flex flex-col gap-2 animate-in fade-in slide-in-up ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                            <div key={msg.id} className={`flex flex-col gap-2 animate-in fade-in slide-in-up mb-6 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                                 <div className={`flex gap-3 md:gap-4 max-w-[95%] md:max-w-[85%] ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
                                     <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${msg.role === 'user' ? 'bg-slate-100' : 'bg-indigo-600 text-white shadow-md'}`}>
                                         {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
                                     </div>
                                     <div className={`p-3 md:p-4 rounded-lg text-sm leading-relaxed whitespace-pre-wrap shadow-sm ${msg.role === 'user' ? 'bg-white border border-slate-200' : 'bg-indigo-50 border border-indigo-100 text-slate-800'}`}>
-                                        {/* Clean the text for display (hide action codes and suggestions if any remained) */}
-                                        {msg.text.replace(/\[\[EXECUTE:.*?\]\]/g, '').replace(/\/\/\/SUGGESTIONS\/\/\/.*$/, '').trim()}
+                                        {msg.text}
                                     </div>
                                 </div>
                                 
-                                {/* Render Suggestions Chips if available */}
+                                {/* Render Suggestions Chips */}
                                 {msg.suggestions && msg.suggestions.length > 0 && (
                                     <div className="flex flex-wrap gap-2 ml-12 max-w-[85%] animate-in fade-in delay-200">
                                         {msg.suggestions.map((s, i) => (
@@ -458,7 +437,7 @@ const App: React.FC = () => {
                             </div>
                         ))}
                         {isChatTyping && (
-                            <div className="flex gap-4">
+                            <div className="flex gap-4 mb-4">
                                 <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0">
                                     <Bot className="w-4 h-4 text-white" />
                                 </div>
@@ -470,57 +449,47 @@ const App: React.FC = () => {
                             </div>
                         )}
                         <div ref={chatEndRef} />
-                    </>
+                    </div>
                  )}
-             </div>
-
-             <div className="p-4 border-t border-slate-100 bg-white z-20">
-                 <div className="relative">
-                     <input 
-                        value={chatInput} 
-                        onChange={(e) => setChatInput(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-                        placeholder="Interrogate the evidence or /draft..." 
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-4 pr-12 py-3 text-sm focus:outline-none focus:border-indigo-400 focus:bg-white transition-all shadow-inner"
-                        disabled={sources.length === 0}
-                     />
-                     <button 
-                        onClick={sendMessage} 
-                        disabled={!chatInput.trim() || sources.length === 0}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-indigo-600 hover:bg-indigo-50 rounded disabled:opacity-50 disabled:cursor-not-allowed"
-                     >
-                         <Send className="w-4 h-4" />
-                     </button>
+                 
+                 {/* INPUT AREA */}
+                 <div className="pt-4 border-t border-slate-100 bg-white z-20 flex-shrink-0 sticky bottom-0">
+                    <div className="relative">
+                        <input 
+                            value={chatInput} 
+                            onChange={(e) => setChatInput(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+                            placeholder="Interrogate the evidence or /draft..." 
+                            className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-4 pr-12 py-3 text-sm focus:outline-none focus:border-indigo-400 focus:bg-white transition-all shadow-inner"
+                            disabled={sources.length === 0}
+                        />
+                        <button 
+                            onClick={sendMessage} 
+                            disabled={!chatInput.trim() || sources.length === 0}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-indigo-600 hover:bg-indigo-50 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            <Send className="w-4 h-4" />
+                        </button>
+                    </div>
+                    <div className="px-1 pt-1 text-[10px] text-slate-400 font-mono">
+                        Try: <span className="text-indigo-500">/draft Demand Letter: Focus on injury</span>
+                    </div>
                  </div>
-                 <div className="px-1 pt-1 text-[10px] text-slate-400 font-mono">
-                    Try: <span className="text-indigo-500">/draft Demand Letter: Focus on injury</span>
-                 </div>
-             </div>
-        </div>
+         </div>
+      </DashboardLayout>
 
-        {/* COLUMN 3: CASE STUDIO (Responsive) */}
-        <div className={`
-            flex-shrink-0 bg-slate-50 z-10 border-l border-slate-200 transition-all duration-300 ease-in-out
-            ${isRightPanelOpen ? 'w-80 lg:w-96 translate-x-0' : 'w-0 translate-x-full overflow-hidden opacity-0'}
-            absolute right-0 top-0 bottom-0 lg:static h-full shadow-2xl lg:shadow-none
-        `}>
-            <div className="w-80 lg:w-96 h-full"> {/* Inner wrapper */}
-                <CaseStudio 
-                    artifacts={artifacts} 
-                    recommendedProtocols={contextData.recommendedProtocols}
-                    onRunProtocol={runProtocol}
-                    onOpenArtifact={setActiveArtifact}
-                />
-            </div>
-        </div>
+      {/* OVERLAYS */}
+      {!checkingKey && !hasApiKey && (
+           <div className="fixed inset-0 z-[200] bg-black/90 flex items-center justify-center">
+             <button onClick={async () => { await window.aistudio.openSelectKey(); setHasApiKey(true); }} className="btn-primary px-8 py-4 rounded uppercase">Authenticate</button>
+           </div>
+      )}
 
-        {/* PREVIEW OVERLAY (FOCUS MODE) */}
-        {activeArtifact && (
-            <div className="fixed inset-0 z-50 bg-white/95 backdrop-blur-sm flex flex-col animate-in fade-in">
+      {activeArtifact && (
+            <div className="fixed inset-0 z-[200] bg-white/95 backdrop-blur-sm flex flex-col animate-in fade-in">
                 <div className="h-16 border-b border-slate-200 flex items-center justify-between px-8 bg-white">
                     <div className="flex items-center gap-3">
                         <div className="p-2 bg-indigo-50 rounded">
-                             {/* Icon based on type */}
                              <Bot className="w-5 h-5 text-indigo-600" />
                         </div>
                         <div>
@@ -571,9 +540,8 @@ const App: React.FC = () => {
                     </div>
                 </div>
             </div>
-        )}
-
-    </div>
+      )}
+    </>
   );
 };
 

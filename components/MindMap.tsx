@@ -1,4 +1,3 @@
-
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -7,6 +6,13 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { MindMapData, MindMapNode } from '../types';
 import { User, FileText, MapPin, AlertTriangle, Briefcase, ZoomIn, ZoomOut, Maximize2, X, MessageSquare, Tag, Quote, RefreshCw, Grab } from 'lucide-react';
 
+interface SimulationNode extends MindMapNode {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+}
+
 interface MindMapProps {
   data: MindMapData;
   onNodeClick: (node: MindMapNode) => void;
@@ -14,7 +20,7 @@ interface MindMapProps {
 }
 
 const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
-  const [nodes, setNodes] = useState<MindMapNode[]>([]);
+  const [nodes, setNodes] = useState<SimulationNode[]>([]);
   const [zoom, setZoom] = useState(0.8);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [selectedNode, setSelectedNode] = useState<MindMapNode | null>(null);
@@ -24,8 +30,16 @@ const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [draggedNodeId, setDraggedNodeId] = useState<string | null>(null);
 
+  // Ref to track dragged node ID inside the simulation loop without stale closures
+  const draggedNodeIdRef = useRef<string | null>(null);
+
   const containerRef = useRef<HTMLDivElement>(null);
-  const animationRef = useRef<number>();
+  const animationRef = useRef<number | null>(null);
+
+  // Sync ref with state
+  useEffect(() => {
+    draggedNodeIdRef.current = draggedNodeId;
+  }, [draggedNodeId]);
 
   // --- PHYSICS ENGINE ---
   useEffect(() => {
@@ -41,7 +55,7 @@ const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
     const centerX = width / 2;
     const centerY = height / 2;
 
-    const initialNodes = data.nodes.map((n, i) => {
+    const initialNodes: SimulationNode[] = data.nodes.map((n, i) => {
         // Spiral layout for initial spread to avoid stacking 
         const angle = 0.5 * i;
         const radius = 50 + 10 * i;
@@ -77,8 +91,8 @@ const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
                 // A. Repulsion (Nodes push each other away)
                 newNodes.forEach((other, j) => {
                     if (i === j) return;
-                    const dx = node.x! - other.x!;
-                    const dy = node.y! - other.y!;
+                    const dx = node.x - other.x;
+                    const dy = node.y - other.y;
                     let distSq = dx * dx + dy * dy;
                     if (distSq < 100) distSq = 100; // Prevent singularity / infinity
                     
@@ -99,8 +113,8 @@ const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
                     }
 
                     if (otherNode) {
-                        const dx = otherNode.x! - node.x!;
-                        const dy = otherNode.y! - node.y!;
+                        const dx = otherNode.x - node.x;
+                        const dy = otherNode.y - node.y;
                         const dist = Math.sqrt(dx * dx + dy * dy);
                         
                         // Hooke's Law with ideal length
@@ -116,22 +130,22 @@ const MindMap: React.FC<MindMapProps> = ({ data, onNodeClick, onClose }) => {
                 });
 
                 // C. Center Gravity (Gentle drift to middle so it doesn't fly away)
-                fx += (centerX - node.x!) * centerGravity;
-                fy += (centerY - node.y!) * centerGravity;
+                fx += (centerX - node.x) * centerGravity;
+                fy += (centerY - node.y) * centerGravity;
 
                 // D. Update Velocity & Position
-                if (node.id !== draggedNodeId) { 
-                    node.vx = (node.vx! + fx) * damping;
-                    node.vy = (node.vy! + fy) * damping;
+                if (node.id !== draggedNodeIdRef.current) { 
+                    node.vx = (node.vx + fx) * damping;
+                    node.vy = (node.vy + fy) * damping;
 
                     // Clamp velocity
-                    if (node.vx! > maxVelocity) node.vx = maxVelocity;
-                    if (node.vx! < -maxVelocity) node.vx = -maxVelocity;
-                    if (node.vy! > maxVelocity) node.vy = maxVelocity;
-                    if (node.vy! < -maxVelocity) node.vy = -maxVelocity;
+                    if (node.vx > maxVelocity) node.vx = maxVelocity;
+                    if (node.vx < -maxVelocity) node.vx = -maxVelocity;
+                    if (node.vy > maxVelocity) node.vy = maxVelocity;
+                    if (node.vy < -maxVelocity) node.vy = -maxVelocity;
 
-                    node.x! += node.vx!;
-                    node.y! += node.vy!;
+                    node.x += node.vx;
+                    node.y += node.vy;
                 }
             });
 
